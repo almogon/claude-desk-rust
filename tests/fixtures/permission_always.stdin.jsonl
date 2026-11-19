@@ -1,0 +1,3 @@
+{"type":"user","message":{"role":"user","content":"ejecuta con la herramienta Bash el comando: mkdir d1"}}
+{"type":"control_response","response":{"subtype":"success","request_id":"f73f96a0-1a4c-4fa7-b663-ef80bda713e7","response":{"behavior":"allow","updatedInput":{"command":"mkdir d1","description":"Create directory d1"},"updatedPermissions":[{"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"mkdir d1 *"}],"behavior":"allow","destination":"localSettings"}]}}}
+{"type":"user","message":{"role":"user","content":"ejecuta con la herramienta Bash el comando: mkdir d1 d3"}}

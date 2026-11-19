@@ -1,0 +1,2 @@
+{"type":"user","message":{"role":"user","content":"usa la herramienta Write para crear el archivo hola.txt con el contenido: hola"}}
+{"type":"control_response","response":{"subtype":"success","request_id":"c36b4cc8-40ed-4100-94c5-46860e1c0c55","response":{"behavior":"deny","message":"Denegado por el usuario en el spike"}}}

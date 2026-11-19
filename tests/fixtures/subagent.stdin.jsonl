@@ -1,0 +1,1 @@
+{"type":"user","message":{"role":"user","content":"Usa la herramienta Agent (Task) para lanzar un subagente de tipo general-purpose que lea el archivo nota.txt de este directorio y te diga qué clave contiene. Después responde solo con esa clave."}}

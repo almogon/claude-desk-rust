@@ -1,0 +1,13 @@
+{"type":"control_request","request_id":"req_1","request":{"subtype":"initialize"}}
+{"type":"user","message":{"role":"user","content":"responde solo: uno"}}
+{"type":"control_request","request_id":"req_2","request":{"subtype":"set_model","model":"sonnet"}}
+{"type":"control_request","request_id":"req_3","request":{"subtype":"set_permission_mode","mode":"acceptEdits"}}
+{"type":"user","message":{"role":"user","content":"responde solo: dos"}}
+{"type":"control_request","request_id":"req_4","request":{"subtype":"set_permission_mode","mode":"plan"}}
+{"type":"control_request","request_id":"req_5","request":{"subtype":"set_model","model":"haiku"}}
+{"type":"control_request","request_id":"req_6","request":{"subtype":"set_permission_mode","mode":"bogus"}}
+{"type":"control_request","request_id":"req_7","request":{"subtype":"bogus_subtype"}}
+{"type":"user","message":{"role":"user","content":"responde solo: tres"}}
+{"type":"user","message":{"role":"user","content":"escribe un relato de 1500 palabras sobre un dragon"}}
+{"type":"control_request","request_id":"req_8","request":{"subtype":"interrupt"}}
+{"type":"user","message":{"role":"user","content":"responde solo: cuatro"}}

@@ -1,0 +1,30 @@
+[package]
+name = "claude-deck"
+version = "0.1.0"
+edition = "2024"
+description = "Desktop deck that wraps the Claude Code CLI (headless stream-json mode)"
+license = "MIT"
+repository = "https://github.com/almogon/claude-desk-rust"
+
+[dependencies]
+arboard = "3"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5"
+eframe = { version = "0.37.0", features = ["persistence"] }
+egui = "0.37.0"
+egui_commonmark = "0.26.0"
+egui_extras = { version = "0.37.0", features = ["svg", "image"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+rfd = "0.18.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+tokio = { version = "1", features = ["process", "io-util", "rt-multi-thread", "macros", "sync", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4"] }
+which = "6"
+
+[dev-dependencies]
+tempfile = "3"
