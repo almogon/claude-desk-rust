@@ -7,8 +7,11 @@ Personal desktop client for [Claude Code](https://claude.com/claude-code), writt
 - **Visual system**: IBM Plex Sans/Mono embedded; session state is one colour across sidebar, header chip and chat (working = orange, needs permission = amber, waiting for you = blue, finished = grey, error = red).
 - **Header**: icon, active conversation title with a state chip, and model / permission mode / folder dropdown chips. Model and mode apply live to the active session.
 - **Sidebar**: conversations grouped as *Corriendo*, *Pendientes* and *Terminadas* (empty groups hidden), plus the Claude Code history from `~/.claude/projects` grouped by day, with search, folder filter, a toggle for test sessions (hidden by default) and resume.
-- **Conversation view**: full-width reading column, streaming markdown, compact tool rows (grouped when consecutive), a live "working" line, inline permission cards (allow / allow always / deny with reason, plan approval), auto-growing input (Enter sends, Shift+Enter new line), stop button.
+- **Conversation view**: full-width reading column, streaming markdown, compact tool rows (grouped when consecutive), a live "working" line, inline permission cards (allow / allow always / deny with reason), answering Claude's questions (`AskUserQuestion`: single/multiple choice or free text), plan approval with a choice of the next mode (auto / accept edits / ask) and optional plan editing, auto-growing input (Enter sends, Shift+Enter new line), stop button.
+- **Task list**: a collapsible strip above the input shows Claude's task list (pending / in progress / done, with a counter). The CLI's task tools are off in headless mode, so claude-deck enables them through `--tools` (see `docs/protocol.md` section 14).
 - **Attachments**: Ctrl+V pastes screenshots/images and copied files, dropping files on the window attaches images or inserts `@path`, and long pasted text (over 15 lines or 1500 characters) becomes a removable chip.
+- **Diff panel**: a "Cambios" button in the header toggles a right-hand panel with the working-tree changes against `HEAD` (changed and untracked files, per-file `+/-` counts, hunks with coloured lines). It refreshes when a turn ends or the active conversation changes.
+- **Worktree per conversation**: the "Aislar en worktree" checkbox (enabled when the folder is a git repo) starts each new conversation in its own `git worktree` under `.claude/worktrees/` on a `deck/...` branch. Removing the conversation deletes the worktree if it has no changes and keeps it otherwise.
 - **Bottom tabs** (collapsible):
   - *Subagentes*: table of the subagents working right now (status, type, description, current activity, duration and tool count); a finished one stays listed for 3 s with a green/red dot and then disappears. Click a row to see its transcript.
   - *Usage*: 5-hour and 7-day plan limits (from the CLI's `rate_limit_event`), per-session tokens/cost, day total, and the `/usage` output on demand.
@@ -40,7 +43,6 @@ Each conversation is a long-lived `claude -p --input-format stream-json --output
 - Parts of the stream-json protocol (control requests, `rate_limit_event`) are not officially documented and may change with CLI updates.
 - Plan-limit percentages appear only after the CLI emits a `rate_limit_event`; use "Actualizar /usage" otherwise.
 - The day cost total lives in memory and undercounts the first turn of a resumed session.
-- `AskUserQuestion` answers cannot be sent yet (only allow/deny).
 
 ## License
 

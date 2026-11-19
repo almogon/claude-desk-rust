@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, Local, NaiveDate, TimeZone};
 use serde_json::Value;
 
+use crate::git::WorktreeInfo;
 use crate::protocol::{
     AssistantMessage, AttachmentSummary, CanUseTool, ContentBlock, ControlRequestBody, Incoming,
     RateLimitInfo, RateWindow, ResultMessage, SlashCommand, StreamKind, TaskEvent, UserMessage,
@@ -296,6 +297,8 @@ pub struct NewSession {
     pub title: Option<String>,
     /// Transcript loaded from history (resumed sessions).
     pub transcript: Vec<Item>,
+    /// Git worktree this conversation runs in (its path is `cwd`).
+    pub worktree: Option<WorktreeInfo>,
 }
 
 impl NewSession {
@@ -309,6 +312,7 @@ impl NewSession {
             resume_session_id: None,
             title: None,
             transcript: Vec::new(),
+            worktree: None,
         }
     }
 }
@@ -334,6 +338,8 @@ pub struct Session {
     pub usage: SessionUsage,
     /// Slash commands for autocomplete (filled from `initialize` / `system/init`).
     pub commands: Vec<SlashCommand>,
+    /// Git worktree this conversation runs in, if isolated.
+    pub worktree: Option<WorktreeInfo>,
     /// Request id of the `initialize` control request we sent.
     initialize_request: Option<String>,
     resumed: bool,
@@ -344,6 +350,57 @@ pub struct Session {
 }
 
 const TITLE_MAX: usize = 60;
+
+/// Status of one task in the model's task list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TodoStatus {
+    Pending,
+    InProgress,
+    Completed,
+}
+
+/// One task of the model's task list (`TodoWrite`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TodoItem {
+    pub content: String,
+    /// Present-continuous wording shown while the task is in progress.
+    pub active_form: Option<String>,
+    pub status: TodoStatus,
+}
+
+/// Id from a `TaskCreate` result text such as `Task #1 created successfully: ...`.
+fn task_id_from_text(text: &str) -> Option<String> {
+    let rest = text.split("Task #").nth(1)?;
+    let id: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    (!id.is_empty()).then_some(id)
+}
+
+/// Parses `input.todos[]` of a `TodoWrite` call; `None` if it has no `todos` array.
+fn parse_todos(input: &Value) -> Option<Vec<TodoItem>> {
+    let arr = input.get("todos")?.as_array()?;
+    Some(
+        arr.iter()
+            .filter_map(|t| {
+                let content = t.get("content")?.as_str()?.to_owned();
+                let status = match t.get("status").and_then(Value::as_str) {
+                    Some("in_progress") => TodoStatus::InProgress,
+                    Some("completed") => TodoStatus::Completed,
+                    _ => TodoStatus::Pending,
+                };
+                let active_form = t
+                    .get("activeForm")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned);
+                Some(TodoItem {
+                    content,
+                    active_form,
+                    status,
+                })
+            })
+            .collect(),
+    )
+}
 
 /// Filters slash commands for autocomplete. `query` is the text after the `/`
 /// (case-insensitive). Prefix matches (name or alias) come first, then
@@ -409,12 +466,94 @@ impl Session {
             subagents: Vec::new(),
             usage: SessionUsage::default(),
             commands: Vec::new(),
+            worktree: n.worktree,
             initialize_request: None,
             resumed: n.resume_session_id.is_some(),
             outstanding_turns: 0,
             last_total_cost: None,
             streaming_text: None,
         }
+    }
+
+    /// Current task list of the main conversation, from the last `TodoWrite`
+    /// call (its `todos` array replaces the whole list). Subagent items live in
+    /// `subagents`, so they never show up here. Tolerant: calls or entries with
+    /// an unknown shape are skipped.
+    pub fn todos(&self) -> Vec<TodoItem> {
+        // (task id, item). `TodoWrite` entries have no id.
+        let mut list: Vec<(Option<String>, TodoItem)> = Vec::new();
+        let mut created = 0usize;
+        for it in &self.transcript {
+            let Item::ToolUse {
+                name,
+                input,
+                result,
+                ..
+            } = it
+            else {
+                continue;
+            };
+            let failed = matches!(result, Some((_, true)));
+            match name.as_str() {
+                "TodoWrite" => {
+                    if let Some(v) = parse_todos(input) {
+                        list = v.into_iter().map(|t| (None, t)).collect();
+                    }
+                }
+                "TaskCreate" if !failed => {
+                    let Some(subject) = input.get("subject").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    created += 1;
+                    // Ids only come back in the result ("Task #N created ...");
+                    // without it assume they are sequential from 1.
+                    let id = result
+                        .as_ref()
+                        .and_then(|(text, _)| task_id_from_text(text))
+                        .unwrap_or_else(|| created.to_string());
+                    list.push((
+                        Some(id),
+                        TodoItem {
+                            content: subject.to_owned(),
+                            active_form: input
+                                .get("activeForm")
+                                .and_then(Value::as_str)
+                                .filter(|s| !s.is_empty())
+                                .map(str::to_owned),
+                            status: TodoStatus::Pending,
+                        },
+                    ));
+                }
+                "TaskUpdate" if !failed => {
+                    let id = match input.get("taskId") {
+                        Some(Value::String(s)) => s.clone(),
+                        Some(Value::Number(n)) => n.to_string(),
+                        _ => continue,
+                    };
+                    let Some(pos) = list.iter().position(|(i, _)| i.as_deref() == Some(&id)) else {
+                        continue;
+                    };
+                    match input.get("status").and_then(Value::as_str) {
+                        Some("deleted") => {
+                            list.remove(pos);
+                            continue;
+                        }
+                        Some("pending") => list[pos].1.status = TodoStatus::Pending,
+                        Some("in_progress") => list[pos].1.status = TodoStatus::InProgress,
+                        Some("completed") => list[pos].1.status = TodoStatus::Completed,
+                        _ => {}
+                    }
+                    if let Some(s) = input.get("subject").and_then(Value::as_str) {
+                        list[pos].1.content = s.to_owned();
+                    }
+                    if let Some(s) = input.get("activeForm").and_then(Value::as_str) {
+                        list[pos].1.active_form = Some(s.to_owned()).filter(|s| !s.is_empty());
+                    }
+                }
+                _ => {}
+            }
+        }
+        list.into_iter().map(|(_, t)| t).collect()
     }
 
     /// Group for the Corriendo / Pendientes / Terminadas lists.
@@ -1290,5 +1429,133 @@ mod command_tests {
     fn case_insensitive() {
         let cmds = vec![cmd("Compact", &[], false)];
         assert_eq!(filter_commands(&cmds, "COMP", 5).len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod todo_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn tool(name: &str, input: Value) -> Item {
+        Item::ToolUse {
+            id: "t1".into(),
+            name: name.into(),
+            input,
+            result: None,
+        }
+    }
+
+    fn session(transcript: Vec<Item>) -> Session {
+        let mut n = NewSession::new(SessionKey::new(), r"C:\work");
+        n.transcript = transcript;
+        Session::new(n, Local::now())
+    }
+
+    #[test]
+    fn todos_last_call_replaces_list() {
+        let s = session(vec![
+            tool(
+                "TodoWrite",
+                json!({"todos":[{"content":"a","status":"pending","activeForm":"Doing a"}]}),
+            ),
+            tool("Bash", json!({"command":"ls"})),
+            tool(
+                "TodoWrite",
+                json!({"todos":[
+                    {"content":"a","status":"completed","activeForm":"Doing a"},
+                    {"content":"b","status":"in_progress","activeForm":"Doing b"},
+                    {"content":"c","status":"pending"}
+                ]}),
+            ),
+        ]);
+        let t = s.todos();
+        assert_eq!(t.len(), 3);
+        assert_eq!(t[0].status, TodoStatus::Completed);
+        assert_eq!(t[1].status, TodoStatus::InProgress);
+        assert_eq!(t[1].active_form.as_deref(), Some("Doing b"));
+        assert_eq!(t[2].status, TodoStatus::Pending);
+        assert_eq!(t[2].active_form, None);
+    }
+
+    fn done(name: &str, input: Value, text: &str) -> Item {
+        Item::ToolUse {
+            id: "x".into(),
+            name: name.into(),
+            input,
+            result: Some((text.into(), false)),
+        }
+    }
+
+    #[test]
+    fn task_tools_build_list() {
+        let s = session(vec![
+            done(
+                "TaskCreate",
+                json!({"subject":"A","description":"d","activeForm":"Doing A"}),
+                "Task #1 created successfully: A",
+            ),
+            done(
+                "TaskCreate",
+                json!({"subject":"B"}),
+                "Task #2 created successfully: B",
+            ),
+            // No result text: assumed sequential (3).
+            tool("TaskCreate", json!({"subject":"C"})),
+            done(
+                "TaskUpdate",
+                json!({"taskId":"1","status":"completed"}),
+                "Updated task #1 status",
+            ),
+            done(
+                "TaskUpdate",
+                json!({"taskId":"2","status":"in_progress"}),
+                "Updated task #2 status",
+            ),
+            done("TaskUpdate", json!({"taskId":"3","status":"deleted"}), "ok"),
+            done(
+                "TaskUpdate",
+                json!({"taskId":"99","status":"completed"}),
+                "ok",
+            ),
+            done("TaskList", json!({}), "whatever"),
+        ]);
+        let t = s.todos();
+        assert_eq!(t.len(), 2);
+        assert_eq!(t[0].content, "A");
+        assert_eq!(t[0].status, TodoStatus::Completed);
+        assert_eq!(t[0].active_form.as_deref(), Some("Doing A"));
+        assert_eq!(t[1].status, TodoStatus::InProgress);
+    }
+
+    #[test]
+    fn task_id_parsing() {
+        assert_eq!(task_id_from_text("Task #12 created"), Some("12".into()));
+        assert_eq!(task_id_from_text("nothing"), None);
+    }
+
+    #[test]
+    fn todos_tolerates_unknown_shapes() {
+        let s = session(vec![
+            tool(
+                "TodoWrite",
+                json!({"todos":[{"content":"ok","status":"pending"}]}),
+            ),
+            tool("TodoWrite", json!({"nothing": 1})),
+            tool("TodoWrite", json!({"todos":[{"status":"pending"}, 5]})),
+        ]);
+        // The last call has a `todos` array (all entries invalid): empty list.
+        assert!(s.todos().is_empty());
+        let s = session(vec![
+            tool(
+                "TodoWrite",
+                json!({"todos":[{"content":"ok","status":"weird"}]}),
+            ),
+            tool("TodoWrite", json!("garbage")),
+        ]);
+        // Garbage calls are skipped; the previous valid call wins.
+        assert_eq!(s.todos().len(), 1);
+        assert_eq!(s.todos()[0].status, TodoStatus::Pending);
+        assert!(session(Vec::new()).todos().is_empty());
     }
 }

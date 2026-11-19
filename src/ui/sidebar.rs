@@ -36,6 +36,17 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
             {
                 actions.push(Action::NewConversation);
             }
+            let is_repo = app.folder_is_repo();
+            let tip = "Crea un git worktree y una rama deck/… para esta conversación";
+            let r = ui.add_enabled(
+                is_repo,
+                egui::Checkbox::new(&mut app.settings.use_worktree, "Aislar en worktree"),
+            );
+            if is_repo {
+                r.on_hover_text(tip);
+            } else {
+                r.on_disabled_hover_text(format!("{tip}. La carpeta no es un repositorio git."));
+            }
             ui.add_space(8.0);
 
             let active = app.active_key();

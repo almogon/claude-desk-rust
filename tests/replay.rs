@@ -400,3 +400,43 @@ fn streaming_deltas_do_not_duplicate() {
     );
     assert_eq!(s.model.as_deref(), Some("m1"));
 }
+
+fn first_permission(st: &AppState, key: SessionKey) -> claude_deck::state::PermissionItem {
+    st.session(key)
+        .unwrap()
+        .transcript
+        .iter()
+        .find_map(|i| match i {
+            Item::PermissionRequest(p) => Some(p.clone()),
+            _ => None,
+        })
+        .expect("a PermissionRequest item")
+}
+
+#[test]
+fn ask_answer_creates_question_request() {
+    let (st, key) = replay("ask_answer", |_| Some(true), noop);
+    let p = first_permission(&st, key);
+    assert_eq!(p.tool_name, "AskUserQuestion");
+    assert!(p.is_special_tool());
+    assert_eq!(p.resolved, Some(true));
+    let q = &p.input["questions"][0];
+    assert_eq!(q["multiSelect"], false);
+    assert_eq!(q["options"].as_array().unwrap().len(), 2);
+    assert!(q["question"].as_str().unwrap().contains("color"));
+}
+
+#[test]
+fn plan_edit_creates_plan_request() {
+    let (st, key) = replay("plan_edit", |_| Some(true), noop);
+    let p = first_permission(&st, key);
+    assert_eq!(p.tool_name, "ExitPlanMode");
+    assert!(p.is_special_tool());
+    assert_eq!(p.resolved, Some(true));
+    assert!(p.input["plan"].as_str().unwrap().contains("hola.txt"));
+    assert!(p.input["planFilePath"].is_string());
+    assert_eq!(
+        st.session(key).unwrap().mode.as_deref(),
+        Some("acceptEdits")
+    );
+}

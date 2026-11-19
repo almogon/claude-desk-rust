@@ -3,6 +3,7 @@
 //! directly: they push [`Action`]s that `DeckApp` applies at the end of the frame.
 
 pub mod chat;
+pub mod diff;
 pub mod header;
 pub mod input;
 pub mod permission;
@@ -18,8 +19,9 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use egui_commonmark::CommonMarkCache;
 use serde::{Deserialize, Serialize};
 
+use crate::git::{self, FileDiff, WorktreeInfo};
 use crate::history::{self, HistoryEntry, LoadedSession};
-use crate::protocol::{Attachment, PermissionDecision, PermissionMode};
+use crate::protocol::{Attachment, Incoming, PermissionDecision, PermissionMode};
 use crate::session::{
     Notifier, SessionConfig, SessionEvent, SessionEventKind, SessionHandle, SessionKey,
     run_usage_command,
@@ -68,6 +70,10 @@ pub struct Settings {
     pub bottom_collapsed: bool,
     /// Show throwaway sessions (temp dir, `target/tmp`, `sandbox`) in the history.
     pub show_test_sessions: bool,
+    /// Diff side panel open.
+    pub diff_open: bool,
+    /// Run new conversations in their own git worktree (when the folder is a repo).
+    pub use_worktree: bool,
 }
 
 impl Default for Settings {
@@ -82,8 +88,23 @@ impl Default for Settings {
             all_subagents: false,
             bottom_collapsed: false,
             show_test_sessions: false,
+            diff_open: false,
+            use_worktree: false,
         }
     }
+}
+
+/// Result of one diff refresh.
+pub enum DiffOutcome {
+    NotRepo,
+    Files(Vec<FileDiff>),
+    Error(String),
+}
+
+/// Last diff computed, with the folder it belongs to.
+pub struct DiffView {
+    pub cwd: String,
+    pub outcome: DiffOutcome,
 }
 
 /// A past session opened read-only.
@@ -115,11 +136,21 @@ pub enum Action {
         request_id: String,
         decision: PermissionDecision,
     },
+    /// Approve an `ExitPlanMode` request (optionally with an edited plan in
+    /// `updated_input`) and switch that session to `mode`.
+    ApprovePlan {
+        key: SessionKey,
+        request_id: String,
+        updated_input: serde_json::Value,
+        mode: PermissionMode,
+    },
     SetModel(String),
     SetMode(String),
     PickFolder(FolderTarget),
     RefreshHistory,
     RefreshUsage,
+    RefreshDiff,
+    ToggleDiff,
 }
 
 /// What a picked folder is applied to (besides becoming the default).
@@ -167,6 +198,19 @@ pub struct DeckApp {
     pub usage_error: Option<String>,
     /// Transient error shown under the header.
     pub error: Option<String>,
+    /// Last diff result (diff panel).
+    pub diff: Option<DiffView>,
+    pub diff_busy: bool,
+    /// Path of the file selected in the diff panel.
+    pub diff_selected: Option<String>,
+    /// (active session, cwd) of the last diff request; a change triggers a refresh.
+    diff_target: Option<(Option<SessionKey>, String)>,
+    /// A refresh was requested while another one was running.
+    diff_dirty: bool,
+    /// Whether `settings.folder` is a git repo: (folder, answer). Computed on a
+    /// thread whenever the folder changes.
+    repo_cache: Option<(String, bool)>,
+    repo_pending: Option<String>,
     ctx: egui::Context,
     events: Chan<SessionEvent>,
     notifier: Notifier,
@@ -174,6 +218,10 @@ pub struct DeckApp {
     load_chan: Chan<Result<HistoryView, String>>,
     usage_chan: Chan<Result<String, String>>,
     folder_chan: Chan<(String, FolderTarget)>,
+    diff_chan: Chan<(String, DiffOutcome)>,
+    repo_chan: Chan<(String, bool)>,
+    worktree_chan: Chan<Result<WorktreeInfo, String>>,
+    notice_chan: Chan<String>,
 }
 
 impl DeckApp {
@@ -204,6 +252,13 @@ impl DeckApp {
             usage_busy: false,
             usage_error: None,
             error: None,
+            diff: None,
+            diff_busy: false,
+            diff_selected: None,
+            diff_target: None,
+            diff_dirty: false,
+            repo_cache: None,
+            repo_pending: None,
             ctx,
             events: Chan::new(),
             notifier,
@@ -211,6 +266,10 @@ impl DeckApp {
             load_chan: Chan::new(),
             usage_chan: Chan::new(),
             folder_chan: Chan::new(),
+            diff_chan: Chan::new(),
+            repo_chan: Chan::new(),
+            worktree_chan: Chan::new(),
+            notice_chan: Chan::new(),
         };
         app.refresh_history();
         app
@@ -247,8 +306,15 @@ impl DeckApp {
     fn drain(&mut self) {
         while let Ok(ev) = self.events.rx.try_recv() {
             let exited = matches!(ev.kind, SessionEventKind::Exited { .. });
+            let is_result = matches!(
+                &ev.kind,
+                SessionEventKind::Incoming(i) if matches!(**i, Incoming::Result(_))
+            );
             let before = self.state.session(ev.session_key).map(|s| s.status.clone());
             self.state.apply(&ev);
+            if is_result && self.settings.diff_open && self.active_key() == Some(ev.session_key) {
+                self.refresh_diff();
+            }
             let after = self.state.session(ev.session_key).map(|s| s.status.clone());
             if before != after
                 && matches!(
@@ -296,13 +362,162 @@ impl DeckApp {
                     if self.is_fresh(k) {
                         self.remove_session(k);
                     }
-                    self.spawn_session(f, None);
+                    self.new_conversation();
                 }
-                FolderTarget::NewConversation => {
-                    self.spawn_session(f, None);
-                }
+                FolderTarget::NewConversation => self.new_conversation(),
             }
         }
+        while let Ok((cwd, outcome)) = self.diff_chan.rx.try_recv() {
+            self.diff_busy = false;
+            self.diff = Some(DiffView { cwd, outcome });
+            if std::mem::take(&mut self.diff_dirty) && self.settings.diff_open {
+                self.refresh_diff();
+            }
+        }
+        while let Ok(r) = self.repo_chan.rx.try_recv() {
+            if self.repo_pending.as_deref() == Some(r.0.as_str()) {
+                self.repo_pending = None;
+            }
+            self.repo_cache = Some(r);
+        }
+        while let Ok(r) = self.worktree_chan.rx.try_recv() {
+            match r {
+                Ok(info) => {
+                    let cwd = info.path.display().to_string();
+                    self.spawn_session(cwd, None, Some(info));
+                }
+                Err(e) => self.error = Some(e),
+            }
+        }
+        while let Ok(msg) = self.notice_chan.rx.try_recv() {
+            self.error = Some(msg);
+        }
+    }
+
+    /// Folder the diff panel looks at: the active session's, else the default.
+    fn diff_cwd(&self) -> String {
+        self.active_key()
+            .and_then(|k| self.state.session(k))
+            .map(|s| s.cwd.clone())
+            .unwrap_or_else(|| self.settings.folder.clone())
+    }
+
+    /// Recomputes the diff on a worker thread (queued if one is running).
+    fn refresh_diff(&mut self) {
+        let cwd = self.diff_cwd();
+        self.diff_target = Some((self.active_key(), cwd.clone()));
+        if self.diff_busy {
+            self.diff_dirty = true;
+            return;
+        }
+        self.diff_busy = true;
+        let tx = self.diff_chan.tx.clone();
+        let ctx = self.ctx.clone();
+        std::thread::spawn(move || {
+            let dir = std::path::Path::new(&cwd);
+            let outcome = if !git::is_repo(dir) {
+                DiffOutcome::NotRepo
+            } else {
+                match git::diff(dir) {
+                    Ok(f) => DiffOutcome::Files(f),
+                    Err(e) => DiffOutcome::Error(e),
+                }
+            };
+            let _ = tx.send((cwd, outcome));
+            ctx.request_repaint();
+        });
+    }
+
+    /// Per-frame bookkeeping: refresh the diff when the session/folder it
+    /// shows changed, and probe whether the default folder is a git repo.
+    fn housekeeping(&mut self) {
+        if self.settings.diff_open {
+            let now = (self.active_key(), self.diff_cwd());
+            if self.diff_target.as_ref() != Some(&now) {
+                self.refresh_diff();
+            }
+        } else {
+            self.diff_target = None;
+        }
+        let folder = &self.settings.folder;
+        let known = self.repo_cache.as_ref().is_some_and(|(f, _)| f == folder);
+        if !known && self.repo_pending.as_ref() != Some(folder) {
+            self.repo_pending = Some(folder.clone());
+            let f = folder.clone();
+            let tx = self.repo_chan.tx.clone();
+            let ctx = self.ctx.clone();
+            std::thread::spawn(move || {
+                let ok = git::is_repo(std::path::Path::new(&f));
+                let _ = tx.send((f, ok));
+                ctx.request_repaint();
+            });
+        }
+    }
+
+    /// True if the default folder is known to be a git repo (cached).
+    pub fn folder_is_repo(&self) -> bool {
+        self.repo_cache
+            .as_ref()
+            .is_some_and(|(f, ok)| *ok && *f == self.settings.folder)
+    }
+
+    /// Starts a conversation in the default folder, in a fresh worktree when
+    /// the option is on and the folder is a repo.
+    fn new_conversation(&mut self) {
+        let cwd = self.settings.folder.clone();
+        if !(self.settings.use_worktree && self.folder_is_repo()) {
+            self.spawn_session(cwd, None, None);
+            return;
+        }
+        let tx = self.worktree_chan.tx.clone();
+        let ctx = self.ctx.clone();
+        std::thread::spawn(move || {
+            let r = git::repo_root(std::path::Path::new(&cwd))
+                .ok_or_else(|| "La carpeta no es un repositorio git".to_owned())
+                .and_then(|root| git::create_worktree_auto(&root));
+            let _ = tx.send(r);
+            ctx.request_repaint();
+        });
+    }
+
+    /// Removes the worktree if it has no changes, otherwise keeps it; reports
+    /// the outcome through `notice_chan`. Retries because Windows may still
+    /// hold the folder for a moment after the process was killed.
+    fn cleanup_worktree(&self, info: WorktreeInfo) {
+        let tx = self.notice_chan.tx.clone();
+        let ctx = self.ctx.clone();
+        std::thread::spawn(move || {
+            let keep = format!(
+                "Worktree conservado en {} (rama {})",
+                info.path.display(),
+                info.branch
+            );
+            let msg = if !git::worktree_is_pristine(&info) {
+                keep
+            } else {
+                let mut last = String::new();
+                let mut done = false;
+                for attempt in 0..5 {
+                    if attempt > 0 {
+                        std::thread::sleep(std::time::Duration::from_millis(600));
+                    }
+                    match git::remove_worktree(&info) {
+                        Ok(()) => {
+                            done = true;
+                            break;
+                        }
+                        Err(e) => last = e,
+                    }
+                }
+                if done {
+                    "Worktree eliminado (sin cambios)".to_owned()
+                } else {
+                    format!("{keep}. No se pudo eliminar: {last}")
+                }
+            };
+            let _ = tx.send(msg);
+            ctx.request_repaint();
+        });
     }
 
     fn refresh_history(&mut self) {
@@ -326,6 +541,7 @@ impl DeckApp {
         &mut self,
         cwd: String,
         resume: Option<(String, String, Vec<Item>)>,
+        worktree: Option<WorktreeInfo>,
     ) -> Option<SessionKey> {
         let key = SessionKey::new();
         let mode = PermissionMode::parse(&self.settings.mode).unwrap_or(PermissionMode::Default);
@@ -335,6 +551,7 @@ impl DeckApp {
         let mut n = NewSession::new(key, cwd);
         n.model = Some(self.settings.model.clone());
         n.mode = Some(mode.as_str().to_owned());
+        n.worktree = worktree;
         if let Some((id, title, items)) = resume {
             cfg.resume = Some(id.clone());
             n.resume_session_id = Some(id);
@@ -372,10 +589,7 @@ impl DeckApp {
     /// Applies one action.
     pub fn perform(&mut self, action: Action) {
         match action {
-            Action::NewConversation => {
-                let cwd = self.settings.folder.clone();
-                self.spawn_session(cwd, None);
-            }
+            Action::NewConversation => self.new_conversation(),
             Action::Select(k) => self.selected = Some(Selected::Session(k)),
             Action::OpenHistory(entry) => {
                 let tx = self.load_chan.tx.clone();
@@ -400,7 +614,11 @@ impl DeckApp {
                     return;
                 };
                 let (cwd, title, items) = (s.cwd.clone(), s.title.clone(), s.transcript.clone());
-                if self.spawn_session(cwd, Some((id, title, items))).is_some() {
+                let worktree = s.worktree.clone();
+                if self
+                    .spawn_session(cwd, Some((id, title, items)), worktree)
+                    .is_some()
+                {
                     self.remove_session(k);
                     // remove_session cleared the selection if it pointed at `k`;
                     // spawn_session already selected the new one afterwards.
@@ -420,14 +638,21 @@ impl DeckApp {
                     h.loaded.title.clone(),
                     h.loaded.items.clone(),
                 );
-                self.spawn_session(cwd, Some(r));
+                self.spawn_session(cwd, Some(r), None);
             }
             Action::Close(k) => {
                 if let Some(h) = self.handles.get(&k) {
                     h.kill();
                 }
             }
-            Action::Delete(k) => self.remove_session(k),
+            Action::Delete(k) => {
+                let worktree = self.state.session(k).and_then(|s| s.worktree.clone());
+                // remove_session kills the process if it is still alive.
+                self.remove_session(k);
+                if let Some(info) = worktree {
+                    self.cleanup_worktree(info);
+                }
+            }
             Action::Send(k, text, attachments) => {
                 if let Some(h) = self.handles.get(&k) {
                     let r = if attachments.is_empty() {
@@ -454,6 +679,26 @@ impl DeckApp {
                     && let Err(e) = h.respond_permission(&request_id, decision)
                 {
                     self.error = Some(e.to_string());
+                }
+            }
+            Action::ApprovePlan {
+                key,
+                request_id,
+                updated_input,
+                mode,
+            } => {
+                if let Some(h) = self.handles.get(&key) {
+                    let decision = PermissionDecision::Allow {
+                        updated_input,
+                        updated_permissions: Vec::new(),
+                    };
+                    // Same order as the spike: allow first, then the mode change.
+                    if let Err(e) = h
+                        .respond_permission(&request_id, decision)
+                        .and_then(|()| h.set_permission_mode(mode))
+                    {
+                        self.error = Some(e.to_string());
+                    }
                 }
             }
             Action::SetModel(m) => {
@@ -489,6 +734,13 @@ impl DeckApp {
                 });
             }
             Action::RefreshHistory => self.refresh_history(),
+            Action::RefreshDiff => self.refresh_diff(),
+            Action::ToggleDiff => {
+                self.settings.diff_open = !self.settings.diff_open;
+                if self.settings.diff_open {
+                    self.refresh_diff();
+                }
+            }
             Action::RefreshUsage => {
                 if self.usage_busy {
                     return;
@@ -549,12 +801,14 @@ impl Drop for DeckApp {
 impl eframe::App for DeckApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.drain();
+        self.housekeeping();
         let mut actions: Vec<Action> = Vec::new();
         self.shortcuts(ui.ctx(), &mut actions);
 
         header::show(ui, self, &mut actions);
         usage::show_bottom(ui, self, &mut actions);
         sidebar::show(ui, self, &mut actions);
+        diff::show(ui, self, &mut actions);
         chat::show(ui, self, &mut actions);
 
         for a in actions {

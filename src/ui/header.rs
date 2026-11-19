@@ -2,7 +2,7 @@
 
 use egui::{Align, Color32, CornerRadius, Frame, Layout, Margin, RichText, Ui, vec2};
 
-use super::theme::{self, ACCENT, AMBER, LINE, MUTED, R_CHIP, RED, SURFACE, TEXT};
+use super::theme::{self, ACCENT, AMBER, LINE, MUTED, OK, R_CHIP, RED, SURFACE, TEXT};
 use super::{Action, DeckApp, FolderTarget, MODELS, MODES, Selected, dot, short_dir, trunc};
 
 /// Short label of a permission mode for its chip.
@@ -33,7 +33,7 @@ fn chip(ui: &mut Ui, label: &str, color: Color32, menu: impl FnOnce(&mut Ui)) ->
 pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
     let active = app.active_key();
     let live = active.filter(|k| app.is_alive(*k));
-    let (real_model, live_mode, folder, status) = {
+    let (real_model, live_mode, folder, status, worktree) = {
         let s = active.and_then(|k| app.state.session(k));
         (
             s.and_then(|s| s.model.clone()),
@@ -41,6 +41,7 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
                 .and_then(|s| s.mode.clone()),
             s.map(|s| s.cwd.clone()),
             s.map(|s| s.status.clone()),
+            s.and_then(|s| s.worktree.clone()),
         )
     };
     let conv_title: Option<String> = match &app.selected {
@@ -72,7 +73,17 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
                 ui.label(theme::semibold("Claude").size(17.0).color(ACCENT));
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    // Folder (rightmost)
+                    // Diff panel toggle (rightmost)
+                    let open = app.settings.diff_open;
+                    if ui
+                        .add(egui::Button::new("Cambios").selected(open))
+                        .on_hover_text("Mostrar u ocultar los cambios del repositorio")
+                        .clicked()
+                    {
+                        actions.push(Action::ToggleDiff);
+                    }
+
+                    // Folder
                     let path = folder
                         .clone()
                         .unwrap_or_else(|| app.settings.folder.clone());
@@ -100,6 +111,19 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
                         }
                     })
                     .on_hover_text(path.clone());
+
+                    // Worktree branch of the conversation
+                    if let Some(wt) = &worktree {
+                        Frame::new()
+                            .fill(theme::tint(OK, 38))
+                            .corner_radius(R_CHIP)
+                            .inner_margin(Margin::symmetric(9, 2))
+                            .show(ui, |ui| {
+                                ui.label(RichText::new(trunc(&wt.branch, 34)).small().color(OK));
+                            })
+                            .response
+                            .on_hover_text(wt.path.display().to_string());
+                    }
 
                     // Mode
                     let mut mode = live_mode.unwrap_or_else(|| app.settings.mode.clone());

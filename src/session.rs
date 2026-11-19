@@ -157,6 +157,12 @@ impl SessionConfig {
             a.push("--resume".into());
             a.push(r.clone());
         }
+        // Enables the task-list tools. `None` = no cache yet or CLI updated:
+        // spawn without `--tools` so `system/init` teaches us the built-in set.
+        if let Some(tools) = crate::tools::tools_arg() {
+            a.push("--tools".into());
+            a.push(tools);
+        }
         a
     }
 }
@@ -247,7 +253,9 @@ impl SessionHandle {
 
         let _guard = runtime().enter();
         let mut cmd = Command::new(&exe);
-        cmd.args(config.args())
+        let args = config.args();
+        let learning_tools = !args.iter().any(|a| a == "--tools");
+        cmd.args(args)
             .current_dir(&config.cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -294,7 +302,16 @@ impl SessionHandle {
                             continue;
                         }
                         match Incoming::parse_line(line) {
-                            Ok(inc) => em.emit(SessionEventKind::Incoming(Box::new(inc))),
+                            Ok(inc) => {
+                                if let Incoming::Init(i) = &inc {
+                                    crate::tools::on_init(
+                                        learning_tools,
+                                        i.claude_code_version.as_deref(),
+                                        &i.tools,
+                                    );
+                                }
+                                em.emit(SessionEventKind::Incoming(Box::new(inc)));
+                            }
                             Err(e) => {
                                 tracing::warn!(error = %e, "unparsable stdout line");
                                 em.emit(SessionEventKind::ParseError {

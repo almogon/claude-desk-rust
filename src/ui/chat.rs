@@ -12,7 +12,7 @@ use super::{
     reading_column, short_dir, trunc,
 };
 use crate::session::SessionKey;
-use crate::state::{Item, NoteKind, Session, SessionStatus, TurnSummary};
+use crate::state::{Item, NoteKind, Session, SessionStatus, TodoItem, TodoStatus, TurnSummary};
 
 pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
     // The input panel must be declared before the central panel.
@@ -20,6 +20,10 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
         && app.state.session(k).is_some()
     {
         input::show(ui, app, k, actions);
+        // Declared after the input panel so it sits just above it.
+        if let Some(s) = app.state.session(k) {
+            todo_strip(ui, s);
+        }
     }
 
     egui::CentralPanel::default().show(ui, |ui| {
@@ -400,9 +404,116 @@ fn turn_text(t: &TurnSummary) -> String {
     s
 }
 
+/// Collapsible task list (`TodoWrite`) shown just above the input box.
+fn todo_strip(ui: &mut Ui, s: &Session) {
+    let todos = s.todos();
+    let running = matches!(s.status, SessionStatus::Starting | SessionStatus::Running);
+    let done = todos
+        .iter()
+        .filter(|t| t.status == TodoStatus::Completed)
+        .count();
+    if todos.is_empty() || (done == todos.len() && !running) {
+        return;
+    }
+    let id = egui::Id::NULL.with(("todo_collapsed", s.key.0));
+    let mut collapsed: bool = ui.data(|d| d.get_temp(id)).unwrap_or(false);
+    egui::Panel::bottom(egui::Id::NULL.with(("todo_panel", s.key.0)))
+        .frame(Frame::new().fill(BG).inner_margin(Margin::symmetric(14, 6)))
+        .show(ui, |ui| {
+            reading_column(ui, |ui| {
+                Frame::new()
+                    .fill(RAISED)
+                    .corner_radius(R_CARD)
+                    .inner_margin(Margin::symmetric(10, 6))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        let head = ui.horizontal(|ui| {
+                            let chevron = if collapsed { "▸" } else { "▾" };
+                            ui.label(RichText::new(chevron).color(MUTED));
+                            ui.label(theme::semibold("Tareas"));
+                            ui.label(theme::muted(format!("{done}/{}", todos.len())));
+                        });
+                        if ui
+                            .interact(head.response.rect, id.with("head"), Sense::click())
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
+                            collapsed = !collapsed;
+                        }
+                        if collapsed {
+                            return;
+                        }
+                        ui.add_space(2.0);
+                        ScrollArea::vertical()
+                            .id_salt(("todo_scroll", s.key.0))
+                            .max_height(8.0 * 20.0)
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
+                                for t in &todos {
+                                    todo_row(ui, t);
+                                }
+                            });
+                    });
+            });
+        });
+    ui.data_mut(|d| d.insert_temp(id, collapsed));
+}
+
+fn todo_row(ui: &mut Ui, t: &TodoItem) {
+    ui.horizontal(|ui| match t.status {
+        TodoStatus::Pending => {
+            let (r, _) = ui.allocate_exact_size(egui::vec2(11.0, 16.0), Sense::hover());
+            ui.painter()
+                .circle_stroke(r.center(), 4.0, egui::Stroke::new(1.0, MUTED));
+            ui.label(RichText::new(&t.content).color(MUTED));
+        }
+        TodoStatus::InProgress => {
+            dot(ui, ACCENT, 4.0);
+            let text = t.active_form.as_deref().unwrap_or(&t.content);
+            ui.label(RichText::new(text));
+        }
+        TodoStatus::Completed => {
+            ui.label(RichText::new("✔").color(OK));
+            ui.label(RichText::new(&t.content).color(MUTED).strikethrough());
+        }
+    });
+}
+
 /// Short human description of a tool call (command, path, ...).
 pub fn tool_summary(name: &str, input: &serde_json::Value) -> String {
-    let _ = name;
+    if name == "TodoWrite"
+        && let Some(arr) = input.get("todos").and_then(|v| v.as_array())
+    {
+        let done = arr
+            .iter()
+            .filter(|t| t.get("status").and_then(|s| s.as_str()) == Some("completed"))
+            .count();
+        return format!("Lista de tareas actualizada ({done}/{})", arr.len());
+    }
+    let text = |k: &str| input.get(k).and_then(|v| v.as_str());
+    match name {
+        "TaskCreate" => {
+            return format!("Nueva tarea: {}", trunc(text("subject").unwrap_or("?"), 70));
+        }
+        "TaskUpdate" => {
+            let label = match text("status") {
+                Some("in_progress") => "en curso",
+                Some("completed") => "completada",
+                Some("pending") => "pendiente",
+                Some("deleted") => "eliminada",
+                _ => "actualizada",
+            };
+            let id = match input.get("taskId") {
+                Some(serde_json::Value::String(s)) => s.clone(),
+                Some(serde_json::Value::Number(n)) => n.to_string(),
+                _ => "?".into(),
+            };
+            return format!("Tarea #{id} {label}");
+        }
+        "TaskList" => return "Lista de tareas".into(),
+        "TaskGet" => return format!("Tarea #{}", text("taskId").unwrap_or("?")),
+        _ => {}
+    }
     for k in [
         "command",
         "file_path",

@@ -147,7 +147,7 @@ So for a usage meter prefer `rate_limit_event.unifiedWindows` (structured); use 
 3. `system/init` repeats every turn; and `tools` lists `Task` while the call is named `Agent`.
 4. Subagent internals arrive only as whole messages (no partial stream events) unless `--forward-subagent-text` changes this (not tested).
 5. Thinking text is empty in streams (only `estimated_tokens`); the signature is present.
-6. Not tested: deny with `interrupt`, AskUserQuestion / ExitPlanMode as can_use_tool, image content in user messages, `--replay-user-messages`, `--fork-session`, `--permission-prompts none`, concurrent control_requests, behaviour when the client does not answer a control_request, Ctrl-C/kill semantics, running with a spaces-containing cwd.
+6. Not tested: deny with `interrupt`, image content in user messages, `--replay-user-messages`, `--fork-session`, `--permission-prompts none`, concurrent control_requests, behaviour when the client does not answer a control_request, Ctrl-C/kill semantics, running with a spaces-containing cwd.
 7. `rate_limit_event` frequency/trigger is unclear (not every turn). `resetsAt` for five_hour matched `/usage` (time zone handling not verified exactly).
 8. `total_cost_usd` is cumulative per session across resumes? (resume fixture shows value continuing from history `cost-state`; not verified).
 9. Fixtures contain local paths and full CLAUDE.md-derived slash command lists; share with care.
@@ -191,3 +191,46 @@ Format sent by claude-deck (one line on stdin; the base64 payload is omitted her
   {"type":"text","text":"user's own text"}]}}
 ```
 Order: images, pasted texts (wrapped in `<pasted_text>`), user text last. PNGs over 5 MB are downscaled to 2000 px on the longest side before encoding. Serialization is covered by the unit test `user_message_with_attachments_serializes_blocks` (no fixture is stored because of the payload size). In history files image blocks appear as `{"type":"image",...}` inside user messages and pasted texts as `<pasted_text>` text blocks; the history view renders both as chips.
+
+## 13. AskUserQuestion and ExitPlanMode
+
+Fixtures: `tests/fixtures/ask_answer.jsonl` and `plan_edit.jsonl` (+ `.stdin.jsonl`). Real runs (Claude Code 2.1.326 / 2.1.328, `--model haiku`, `--permission-prompt-tool stdio`, empty cwd). Both tools arrive as a normal `can_use_tool` control_request with `requires_user_interaction:true`. In `plan_edit.jsonl` the partial `stream_event` lines were dropped (their fragments split paths).
+
+### 13.1 AskUserQuestion (mode `default`)
+Request (abbreviated):
+```json
+{"type":"control_request","request_id":"<id>","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","input":{"questions":[{"question":"¿Qué color prefieres: rojo o azul?","header":"Color","options":[{"label":"Rojo","description":"..."},{"label":"Azul","description":"..."}],"multiSelect":false}]},"tool_use_id":"toolu_...","requires_user_interaction":true}}
+```
+Answer (worked): allow with `updatedInput` = the original input plus an `answers` object keyed by the full question text, value = the chosen label (or free text):
+```json
+{"type":"control_response","response":{"subtype":"success","request_id":"<id>","response":{"behavior":"allow","updatedInput":{"questions":[...unchanged...],"answers":{"¿Qué color prefieres: rojo o azul?":"azul"}}}}}
+```
+The `tool_result` the model gets: `The user answered: "<question>"="azul". Read the answers carefully ...`, and the final reply was "Azul.". Multi-select answers and the "Other" free-text case were NOT live-tested (the client joins several labels with ", ").
+
+### 13.2 ExitPlanMode (mode `plan`)
+The request input has exactly two fields: `plan` (markdown text) and `planFilePath` (the CLI has already saved the plan to `~/.claude/plans/<name>.md` with a Write call before):
+```json
+{"subtype":"can_use_tool","tool_name":"ExitPlanMode","input":{"plan":"# Plan: ...","planFilePath":"C:\\Users\\user\\.claude\\plans\\<name>.md"},"tool_use_id":"toolu_...","requires_user_interaction":true}
+```
+Approve: allow with `updatedInput` = input with `plan` replaced by the edited text. The edited plan IS honored: the model got `User has approved your plan ... ## Approved Plan (edited by user): <edited text>` (`tool_use_result.planWasEdited:true`) and created the extra file added by the edit. The plan file on disk is not rewritten; only the text sent to the model changes.
+
+Mode after approval: the client sent `{"subtype":"set_permission_mode","mode":"acceptEdits"}` right after the allow response (before the tool_result arrived); the CLI answered `{"mode":"acceptEdits"}`, emitted `system/status` with `permissionMode:"acceptEdits"`, and the following Write calls ran without a prompt (`permission_decision.reason_type:"mode"`). Which mode the CLI picks on its own after an approval when the client does not send `set_permission_mode` was not tested.
+
+## 14. Task list tools (`TaskCreate` / `TaskUpdate`)
+
+Fixture: `tests/fixtures/todos.jsonl` (+ `.stdin.jsonl`), real run (Claude Code 2.1.328, `--model haiku`, `bypassPermissions`, empty cwd); partial `stream_event` lines were dropped (their fragments split paths).
+
+In headless `-p` mode the task-list tools are NOT loaded by default: `system/init.tools` has no `TodoWrite`, `TaskCreate`, `TaskUpdate`, `TaskList` or `TaskGet`, and `ToolSearch` does not find them (`CLAUDE_CODE_ENABLE_TASKS` makes no difference). They appear only when named in `--tools`. But `--tools` REPLACES the built-in set (`--tools "default,TaskCreate"` yields only the Task tools), and an explicit list that omits `AskUserQuestion`, `ExitPlanMode` or `EnterPlanMode` loses them (also from `ToolSearch`). So claude-deck passes the full built-in list plus the four Task tools; see `src/tools.rs`:
+- the built-in list is learned from `system/init.tools` of a session spawned without `--tools` and cached in `<config dir>/claude-deck/tools_cache.json` with the CLI version; it is relearned (one session without `--tools`) when the CLI version changes; a hardcoded fallback is used when no config dir exists;
+- `AskUserQuestion`, `ExitPlanMode` and `EnterPlanMode` are always added.
+
+With the explicit list the Task tools are deferred: the model loads them with `ToolSearch` (`select:TaskCreate,TaskUpdate`) before the first call. `AskUserQuestion` and `ExitPlanMode` still arrive as `can_use_tool`.
+
+Shapes (abbreviated):
+```json
+{"type":"tool_use","name":"TaskCreate","input":{"subject":"Crear a.txt con la letra a","description":"...","activeForm":"Creando a.txt"}}
+{"type":"tool_result","content":"Task #1 created successfully: Crear a.txt con la letra a"}   // tool_use_result: {"task":{"id":"1","subject":"...","description":"..."}}
+{"type":"tool_use","name":"TaskUpdate","input":{"taskId":"1","status":"in_progress"}}        // later "completed"
+{"type":"tool_result","content":"Updated task #1 status"}   // tool_use_result: {"success":true,"taskId":"1","updatedFields":["status"],"statusChange":{"from":"pending","to":"in_progress"}}
+```
+Ids are sequential numeric strings from "1" and only appear in the result. Observed order: all `TaskCreate` calls first, then per task `TaskUpdate in_progress`, the work, `TaskUpdate completed`. `TaskList` / `TaskGet` were not called in the capture. `Session::todos()` also accepts the older `TodoWrite` (`input.todos[]{content,status,activeForm}`, last call wins).
