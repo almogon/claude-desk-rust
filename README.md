@@ -1,4 +1,4 @@
-# claude-deck
+# claude-desktop
 
 Personal desktop client for [Claude Code](https://claude.com/claude-code), written in Rust with egui/eframe. It wraps the installed `claude` CLI in headless `stream-json` mode, so it reuses your login, subscription, `CLAUDE.md` files, skills, agents and settings.
 
