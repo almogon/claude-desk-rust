@@ -17,4 +17,4 @@ Personal desktop client for Claude Code (Rust, egui/eframe 0.37) that wraps the 
 - Always pass `--permission-mode` explicitly (the user's default is `plan`). Show the model from `assistant.message.model`, not from `system/init`.
 - cargo may not be on PATH in agent shells: use `%USERPROFILE%\.cargo\bin\cargo.exe`. The local git is old (no `git switch`).
 - Before committing: `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test`.
-- The repo is public. Fixtures, docs, tests and commits must not contain the user's name, real local paths (use `C:\Users\user`, `C:\work\...`), emails or personal config lists (skills, agents, slash commands, plugins, MCP servers: cut them to 1-2 generic entries).
+- The repo is public. Fixtures, docs, tests and commits must not contain the user's name, real local paths (use `C:\Users\user`, `C:\work\...`), emails or personal config lists (skills, agents, slash commands, plugins, MCP servers and their `mcp__*` tools: cut them to 1-2 generic entries). `tests/private_terms.rs` fails if a term from the git-ignored `.private-terms` (repo root, one per line) shows up in `src/`, `tests/`, `docs/` or the root docs.
