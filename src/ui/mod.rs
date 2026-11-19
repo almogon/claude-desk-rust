@@ -115,6 +115,14 @@ pub enum Action {
         request_id: String,
         decision: PermissionDecision,
     },
+    /// Approve an `ExitPlanMode` request (optionally with an edited plan in
+    /// `updated_input`) and switch that session to `mode`.
+    ApprovePlan {
+        key: SessionKey,
+        request_id: String,
+        updated_input: serde_json::Value,
+        mode: PermissionMode,
+    },
     SetModel(String),
     SetMode(String),
     PickFolder(FolderTarget),
@@ -454,6 +462,26 @@ impl DeckApp {
                     && let Err(e) = h.respond_permission(&request_id, decision)
                 {
                     self.error = Some(e.to_string());
+                }
+            }
+            Action::ApprovePlan {
+                key,
+                request_id,
+                updated_input,
+                mode,
+            } => {
+                if let Some(h) = self.handles.get(&key) {
+                    let decision = PermissionDecision::Allow {
+                        updated_input,
+                        updated_permissions: Vec::new(),
+                    };
+                    // Same order as the spike: allow first, then the mode change.
+                    if let Err(e) = h
+                        .respond_permission(&request_id, decision)
+                        .and_then(|()| h.set_permission_mode(mode))
+                    {
+                        self.error = Some(e.to_string());
+                    }
                 }
             }
             Action::SetModel(m) => {

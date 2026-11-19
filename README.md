@@ -7,7 +7,7 @@ Personal desktop client for [Claude Code](https://claude.com/claude-code), writt
 - **Visual system**: IBM Plex Sans/Mono embedded; session state is one colour across sidebar, header chip and chat (working = orange, needs permission = amber, waiting for you = blue, finished = grey, error = red).
 - **Header**: icon, active conversation title with a state chip, and model / permission mode / folder dropdown chips. Model and mode apply live to the active session.
 - **Sidebar**: conversations grouped as *Corriendo*, *Pendientes* and *Terminadas* (empty groups hidden), plus the Claude Code history from `~/.claude/projects` grouped by day, with search, folder filter, a toggle for test sessions (hidden by default) and resume.
-- **Conversation view**: full-width reading column, streaming markdown, compact tool rows (grouped when consecutive), a live "working" line, inline permission cards (allow / allow always / deny with reason, plan approval), auto-growing input (Enter sends, Shift+Enter new line), stop button.
+- **Conversation view**: full-width reading column, streaming markdown, compact tool rows (grouped when consecutive), a live "working" line, inline permission cards (allow / allow always / deny with reason), answering Claude's questions (`AskUserQuestion`: single/multiple choice or free text), plan approval with a choice of the next mode (auto / accept edits / ask) and optional plan editing, auto-growing input (Enter sends, Shift+Enter new line), stop button.
 - **Attachments**: Ctrl+V pastes screenshots/images and copied files, dropping files on the window attaches images or inserts `@path`, and long pasted text (over 15 lines or 1500 characters) becomes a removable chip.
 - **Bottom tabs** (collapsible):
   - *Subagentes*: table of the subagents working right now (status, type, description, current activity, duration and tool count); a finished one stays listed for 3 s with a green/red dot and then disappears. Click a row to see its transcript.
@@ -40,7 +40,6 @@ Each conversation is a long-lived `claude -p --input-format stream-json --output
 - Parts of the stream-json protocol (control requests, `rate_limit_event`) are not officially documented and may change with CLI updates.
 - Plan-limit percentages appear only after the CLI emits a `rate_limit_event`; use "Actualizar /usage" otherwise.
 - The day cost total lives in memory and undercounts the first turn of a resumed session.
-- `AskUserQuestion` answers cannot be sent yet (only allow/deny).
 
 ## License
 

@@ -9,7 +9,7 @@ use serde_json::Value;
 use super::chat::tool_summary;
 use super::theme::{self, ACCENT, AMBER, BG, MUTED, OK, R_CARD, RED};
 use super::{Action, dot, trunc};
-use crate::protocol::PermissionDecision;
+use crate::protocol::{PermissionDecision, PermissionMode};
 use crate::session::SessionKey;
 use crate::state::PermissionItem;
 
@@ -73,6 +73,8 @@ pub fn card(
     let is_plan = p.tool_name == "ExitPlanMode";
     let is_ask = p.tool_name == "AskUserQuestion";
     let deny_id = ui.make_persistent_id(("deny_open", &p.request_id));
+    let plan_id = ui.make_persistent_id(("plan_edit", &p.request_id));
+    let mut plan_st: PlanEdit = ui.data(|d| d.get_temp(plan_id)).unwrap_or_default();
     Frame::new()
         .fill(theme::tint(AMBER, 18))
         .stroke(Stroke::new(1.0, AMBER))
@@ -95,14 +97,22 @@ pub fn card(
                 ui.label(theme::muted(trunc(d, 200)));
             }
 
+            // Answers input for AskUserQuestion; `Some` once every question has an answer.
+            let mut ask_input: Option<Value> = None;
+            let plan = p.input.get("plan").and_then(|v| v.as_str()).unwrap_or("");
             if is_plan {
-                let plan = p.input.get("plan").and_then(|v| v.as_str()).unwrap_or("");
-                CommonMarkViewer::new().show(ui, cache, plan);
+                if plan_st.editing {
+                    ui.add(
+                        egui::TextEdit::multiline(&mut plan_st.text)
+                            .font(egui::TextStyle::Monospace)
+                            .desired_rows(10)
+                            .desired_width(f32::INFINITY),
+                    );
+                } else {
+                    CommonMarkViewer::new().show(ui, cache, plan);
+                }
             } else if is_ask {
-                ask_body(ui, &p.input);
-                ui.label(theme::muted(
-                    "Por ahora solo se puede permitir o denegar; la respuesta elegida no se envía.",
-                ));
+                ask_input = ask_form(ui, &p.request_id, &p.input);
             } else {
                 let s = tool_summary(&p.tool_name, &p.input);
                 if !s.is_empty() {
@@ -123,6 +133,8 @@ pub fn card(
 
             let (yes, no) = if is_plan {
                 ("Aprobar plan", "Seguir planificando…")
+            } else if is_ask {
+                ("Enviar respuestas", "Denegar…")
             } else {
                 ("Permitir", "Denegar…")
             };
@@ -138,10 +150,57 @@ pub fn card(
             ui.add_space(4.0);
             if !deny_open {
                 ui.horizontal_wrapped(|ui| {
-                    let primary = egui::Button::new(RichText::new(yes).color(BG))
-                        .fill(ACCENT)
-                        .stroke(Stroke::NONE);
-                    if ui.add(primary).clicked() {
+                    let primary = |label: &str| {
+                        egui::Button::new(RichText::new(label).color(BG))
+                            .fill(ACCENT)
+                            .stroke(Stroke::NONE)
+                    };
+                    if is_plan {
+                        let updated = plan_updated_input(
+                            &p.input,
+                            plan_st.editing.then_some(plan_st.text.as_str()),
+                        );
+                        for (label, mode) in PLAN_APPROVALS {
+                            if ui.add(primary(label)).clicked() {
+                                actions.push(Action::ApprovePlan {
+                                    key,
+                                    request_id: p.request_id.clone(),
+                                    updated_input: updated.clone(),
+                                    mode,
+                                });
+                            }
+                        }
+                        let edit_label = if plan_st.editing {
+                            "Descartar edición"
+                        } else {
+                            "Editar plan"
+                        };
+                        if ui.button(edit_label).clicked() {
+                            if plan_st.editing {
+                                plan_st = PlanEdit::default();
+                            } else {
+                                plan_st.editing = true;
+                                plan_st.text = plan.to_owned();
+                            }
+                        }
+                    } else if is_ask {
+                        let ready = ask_input.is_some();
+                        if ui
+                            .add_enabled(ready, primary(yes))
+                            .on_disabled_hover_text("Responde todas las preguntas.")
+                            .clicked()
+                            && let Some(updated_input) = ask_input.clone()
+                        {
+                            actions.push(Action::Permission {
+                                key,
+                                request_id: p.request_id.clone(),
+                                decision: PermissionDecision::Allow {
+                                    updated_input,
+                                    updated_permissions: Vec::new(),
+                                },
+                            });
+                        }
+                    } else if ui.add(primary(yes)).clicked() {
                         actions.push(allow(Vec::new()));
                     }
                     if !is_plan && !is_ask {
@@ -201,36 +260,247 @@ pub fn card(
                 });
             }
         });
+    ui.data_mut(|d| d.insert_temp(plan_id, plan_st));
 }
 
-/// Readable rendering of `AskUserQuestion` input (`questions[].options[]`).
-fn ask_body(ui: &mut Ui, input: &serde_json::Value) {
-    let Some(qs) = input.get("questions").and_then(|v| v.as_array()) else {
+/// "Approve and switch to <mode>" buttons of the plan card.
+const PLAN_APPROVALS: [(&str, PermissionMode); 3] = [
+    ("Aprobar y modo auto", PermissionMode::Auto),
+    ("Aprobar y aceptar ediciones", PermissionMode::AcceptEdits),
+    ("Aprobar y preguntar", PermissionMode::Default),
+];
+
+/// Edit state of the plan card (egui temp memory, keyed by request id).
+#[derive(Clone, Default)]
+struct PlanEdit {
+    editing: bool,
+    text: String,
+}
+
+/// `ExitPlanMode` input to send on approval: the original input, with `plan`
+/// replaced by `edited` when the user edited it.
+fn plan_updated_input(input: &Value, edited: Option<&str>) -> Value {
+    let mut out = input.clone();
+    if let (Some(text), Some(obj)) = (edited, out.as_object_mut()) {
+        obj.insert("plan".to_owned(), Value::String(text.to_owned()));
+    }
+    out
+}
+
+/// Form state of one `AskUserQuestion` question.
+#[derive(Clone, Default)]
+struct QuestionAnswer {
+    /// One flag per option, in option order.
+    selected: Vec<bool>,
+    /// "Otra" chosen; its text is in `other_text`.
+    other_on: bool,
+    other_text: String,
+}
+
+fn option_labels(q: &Value) -> Vec<&str> {
+    q.get("options")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .map(|o| o.get("label").and_then(Value::as_str).unwrap_or("?"))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Answer string of one question: selected labels (option order) plus the
+/// "Otra" text, joined with ", ". `None` while nothing is answered.
+fn answer_for(q: &Value, a: &QuestionAnswer) -> Option<String> {
+    let mut parts: Vec<String> = option_labels(q)
+        .into_iter()
+        .zip(a.selected.iter())
+        .filter(|(_, on)| **on)
+        .map(|(l, _)| l.to_owned())
+        .collect();
+    let other = a.other_text.trim();
+    if a.other_on && !other.is_empty() {
+        parts.push(other.to_owned());
+    }
+    (!parts.is_empty()).then(|| parts.join(", "))
+}
+
+/// `AskUserQuestion` input to send: the original input plus `answers`
+/// ({question text -> answer}). `None` unless every question is answered.
+fn build_ask_input(input: &Value, answers: &[QuestionAnswer]) -> Option<Value> {
+    let qs = input.get("questions").and_then(Value::as_array)?;
+    if qs.is_empty() {
+        return None;
+    }
+    let mut map = serde_json::Map::new();
+    for (i, q) in qs.iter().enumerate() {
+        let text = q.get("question").and_then(Value::as_str)?;
+        let ans = answer_for(q, answers.get(i)?)?;
+        map.insert(text.to_owned(), Value::String(ans));
+    }
+    let mut out = input.clone();
+    out.as_object_mut()?
+        .insert("answers".to_owned(), Value::Object(map));
+    Some(out)
+}
+
+/// Interactive `AskUserQuestion` form. Returns the input to send once every
+/// question has an answer.
+fn ask_form(ui: &mut Ui, request_id: &str, input: &Value) -> Option<Value> {
+    let Some(qs) = input.get("questions").and_then(Value::as_array) else {
         ui.label(
             RichText::new(trunc(&input.to_string(), 500))
                 .monospace()
                 .small(),
         );
-        return;
+        return None;
     };
-    for q in qs {
-        if let Some(h) = q.get("header").and_then(|v| v.as_str()) {
+    let state_id = ui.make_persistent_id(("ask_answers", request_id));
+    let mut answers: Vec<QuestionAnswer> = ui.data(|d| d.get_temp(state_id)).unwrap_or_default();
+    answers.resize_with(qs.len(), QuestionAnswer::default);
+
+    for (qi, q) in qs.iter().enumerate() {
+        let a = &mut answers[qi];
+        let multi = q
+            .get("multiSelect")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let opts = q
+            .get("options")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        a.selected.resize(opts.len(), false);
+        if let Some(h) = q.get("header").and_then(Value::as_str) {
             ui.label(theme::muted(h));
         }
-        if let Some(t) = q.get("question").and_then(|v| v.as_str()) {
+        if let Some(t) = q.get("question").and_then(Value::as_str) {
             ui.label(theme::semibold(t));
         }
-        if let Some(opts) = q.get("options").and_then(|v| v.as_array()) {
-            for o in opts {
-                let label = o.get("label").and_then(|v| v.as_str()).unwrap_or("?");
-                let desc = o.get("description").and_then(|v| v.as_str()).unwrap_or("");
-                if desc.is_empty() {
-                    ui.label(format!("  • {label}"));
-                } else {
-                    ui.label(format!("  • {label} — {desc}"));
-                }
+        for (oi, o) in opts.iter().enumerate() {
+            let label = o.get("label").and_then(Value::as_str).unwrap_or("?");
+            if multi {
+                ui.checkbox(&mut a.selected[oi], label);
+            } else if ui.radio(a.selected[oi], label).clicked() {
+                a.selected.iter_mut().for_each(|s| *s = false);
+                a.selected[oi] = true;
+                a.other_on = false;
+            }
+            if let Some(d) = o.get("description").and_then(Value::as_str)
+                && !d.is_empty()
+            {
+                ui.horizontal(|ui| {
+                    ui.add_space(24.0);
+                    ui.label(theme::muted(d));
+                });
             }
         }
+        ui.horizontal(|ui| {
+            if multi {
+                ui.checkbox(&mut a.other_on, "Otra");
+            } else if ui.radio(a.other_on, "Otra").clicked() {
+                a.selected.iter_mut().for_each(|s| *s = false);
+                a.other_on = true;
+            }
+            let r = ui.add(
+                egui::TextEdit::singleline(&mut a.other_text)
+                    .hint_text("Escribe tu respuesta")
+                    .desired_width(f32::INFINITY),
+            );
+            if r.changed() && !a.other_text.is_empty() {
+                a.other_on = true;
+                if !multi {
+                    a.selected.iter_mut().for_each(|s| *s = false);
+                }
+            }
+        });
         ui.add_space(4.0);
+    }
+
+    let result = build_ask_input(input, &answers);
+    ui.data_mut(|d| d.insert_temp(state_id, answers));
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    fn input() -> Value {
+        json!({"questions":[
+            {"question":"Color?","header":"Color","multiSelect":false,
+             "options":[{"label":"Rojo","description":"r"},{"label":"Azul","description":"a"}]},
+            {"question":"Extras?","header":"Extras","multiSelect":true,
+             "options":[{"label":"A","description":""},{"label":"B","description":""},{"label":"C","description":""}]}
+        ]})
+    }
+
+    fn ans(selected: &[bool], other: Option<&str>) -> QuestionAnswer {
+        QuestionAnswer {
+            selected: selected.to_vec(),
+            other_on: other.is_some(),
+            other_text: other.unwrap_or_default().to_owned(),
+        }
+    }
+
+    #[test]
+    fn builds_answers_map_with_multiselect_joined() {
+        let out = build_ask_input(
+            &input(),
+            &[ans(&[false, true], None), ans(&[true, false, true], None)],
+        )
+        .unwrap();
+        assert_eq!(out["answers"]["Color?"], "Azul");
+        assert_eq!(out["answers"]["Extras?"], "A, C");
+        // Original questions are kept untouched.
+        assert_eq!(out["questions"], input()["questions"]);
+    }
+
+    #[test]
+    fn other_text_is_used_and_trimmed() {
+        let out = build_ask_input(
+            &input(),
+            &[
+                ans(&[false, false], Some("  verde ")),
+                ans(&[false, true, false], Some("Z")),
+            ],
+        )
+        .unwrap();
+        assert_eq!(out["answers"]["Color?"], "verde");
+        assert_eq!(out["answers"]["Extras?"], "B, Z");
+    }
+
+    #[test]
+    fn incomplete_answers_give_none() {
+        // Second question unanswered.
+        assert!(
+            build_ask_input(
+                &input(),
+                &[ans(&[true, false], None), ans(&[false; 3], None)]
+            )
+            .is_none()
+        );
+        // "Otra" selected but empty.
+        assert!(
+            build_ask_input(
+                &input(),
+                &[ans(&[false, false], Some("  ")), ans(&[true; 3], None)]
+            )
+            .is_none()
+        );
+        // Missing state / no questions.
+        assert!(build_ask_input(&input(), &[]).is_none());
+        assert!(build_ask_input(&json!({"questions":[]}), &[]).is_none());
+        assert!(build_ask_input(&json!({}), &[]).is_none());
+    }
+
+    #[test]
+    fn plan_input_replaces_only_plan_when_edited() {
+        let inp = json!({"plan":"old","planFilePath":"p.md"});
+        assert_eq!(plan_updated_input(&inp, None), inp);
+        let out = plan_updated_input(&inp, Some("new"));
+        assert_eq!(out["plan"], "new");
+        assert_eq!(out["planFilePath"], "p.md");
     }
 }
