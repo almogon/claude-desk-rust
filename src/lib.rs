@@ -12,6 +12,7 @@ pub mod history;
 pub mod protocol;
 pub mod session;
 pub mod state;
+pub mod tools;
 pub mod ui;
 
 /// Installs a `tracing` subscriber writing to stderr (filter via `RUST_LOG`,

@@ -215,3 +215,22 @@ The request input has exactly two fields: `plan` (markdown text) and `planFilePa
 Approve: allow with `updatedInput` = input with `plan` replaced by the edited text. The edited plan IS honored: the model got `User has approved your plan ... ## Approved Plan (edited by user): <edited text>` (`tool_use_result.planWasEdited:true`) and created the extra file added by the edit. The plan file on disk is not rewritten; only the text sent to the model changes.
 
 Mode after approval: the client sent `{"subtype":"set_permission_mode","mode":"acceptEdits"}` right after the allow response (before the tool_result arrived); the CLI answered `{"mode":"acceptEdits"}`, emitted `system/status` with `permissionMode:"acceptEdits"`, and the following Write calls ran without a prompt (`permission_decision.reason_type:"mode"`). Which mode the CLI picks on its own after an approval when the client does not send `set_permission_mode` was not tested.
+
+## 14. Task list tools (`TaskCreate` / `TaskUpdate`)
+
+Fixture: `tests/fixtures/todos.jsonl` (+ `.stdin.jsonl`), real run (Claude Code 2.1.328, `--model haiku`, `bypassPermissions`, empty cwd); partial `stream_event` lines were dropped (their fragments split paths).
+
+In headless `-p` mode the task-list tools are NOT loaded by default: `system/init.tools` has no `TodoWrite`, `TaskCreate`, `TaskUpdate`, `TaskList` or `TaskGet`, and `ToolSearch` does not find them (`CLAUDE_CODE_ENABLE_TASKS` makes no difference). They appear only when named in `--tools`. But `--tools` REPLACES the built-in set (`--tools "default,TaskCreate"` yields only the Task tools), and an explicit list that omits `AskUserQuestion`, `ExitPlanMode` or `EnterPlanMode` loses them (also from `ToolSearch`). So claude-deck passes the full built-in list plus the four Task tools; see `src/tools.rs`:
+- the built-in list is learned from `system/init.tools` of a session spawned without `--tools` and cached in `<config dir>/claude-deck/tools_cache.json` with the CLI version; it is relearned (one session without `--tools`) when the CLI version changes; a hardcoded fallback is used when no config dir exists;
+- `AskUserQuestion`, `ExitPlanMode` and `EnterPlanMode` are always added.
+
+With the explicit list the Task tools are deferred: the model loads them with `ToolSearch` (`select:TaskCreate,TaskUpdate`) before the first call. `AskUserQuestion` and `ExitPlanMode` still arrive as `can_use_tool`.
+
+Shapes (abbreviated):
+```json
+{"type":"tool_use","name":"TaskCreate","input":{"subject":"Crear a.txt con la letra a","description":"...","activeForm":"Creando a.txt"}}
+{"type":"tool_result","content":"Task #1 created successfully: Crear a.txt con la letra a"}   // tool_use_result: {"task":{"id":"1","subject":"...","description":"..."}}
+{"type":"tool_use","name":"TaskUpdate","input":{"taskId":"1","status":"in_progress"}}        // later "completed"
+{"type":"tool_result","content":"Updated task #1 status"}   // tool_use_result: {"success":true,"taskId":"1","updatedFields":["status"],"statusChange":{"from":"pending","to":"in_progress"}}
+```
+Ids are sequential numeric strings from "1" and only appear in the result. Observed order: all `TaskCreate` calls first, then per task `TaskUpdate in_progress`, the work, `TaskUpdate completed`. `TaskList` / `TaskGet` were not called in the capture. `Session::todos()` also accepts the older `TodoWrite` (`input.todos[]{content,status,activeForm}`, last call wins).
