@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, Local, NaiveDate, TimeZone};
 use serde_json::Value;
 
+use crate::git::WorktreeInfo;
 use crate::protocol::{
     AssistantMessage, AttachmentSummary, CanUseTool, ContentBlock, ControlRequestBody, Incoming,
     RateLimitInfo, RateWindow, ResultMessage, SlashCommand, StreamKind, TaskEvent, UserMessage,
@@ -296,6 +297,8 @@ pub struct NewSession {
     pub title: Option<String>,
     /// Transcript loaded from history (resumed sessions).
     pub transcript: Vec<Item>,
+    /// Git worktree this conversation runs in (its path is `cwd`).
+    pub worktree: Option<WorktreeInfo>,
 }
 
 impl NewSession {
@@ -309,6 +312,7 @@ impl NewSession {
             resume_session_id: None,
             title: None,
             transcript: Vec::new(),
+            worktree: None,
         }
     }
 }
@@ -334,6 +338,8 @@ pub struct Session {
     pub usage: SessionUsage,
     /// Slash commands for autocomplete (filled from `initialize` / `system/init`).
     pub commands: Vec<SlashCommand>,
+    /// Git worktree this conversation runs in, if isolated.
+    pub worktree: Option<WorktreeInfo>,
     /// Request id of the `initialize` control request we sent.
     initialize_request: Option<String>,
     resumed: bool,
@@ -460,6 +466,7 @@ impl Session {
             subagents: Vec::new(),
             usage: SessionUsage::default(),
             commands: Vec::new(),
+            worktree: n.worktree,
             initialize_request: None,
             resumed: n.resume_session_id.is_some(),
             outstanding_turns: 0,

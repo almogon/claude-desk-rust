@@ -8,6 +8,7 @@
 //!   [`state::AppState::apply`].
 //! * [`history`]: scanning/loading of `~/.claude/projects/*/*.jsonl`.
 
+pub mod git;
 pub mod history;
 pub mod protocol;
 pub mod session;
