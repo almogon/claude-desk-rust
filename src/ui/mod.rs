@@ -31,6 +31,51 @@ use crate::state::{AppState, Item, NewSession, PendingReason, SessionStatus};
 /// Models offered in the header (CLI aliases).
 pub const MODELS: [&str; 4] = ["opus", "sonnet", "haiku", "fable"];
 
+/// Version each alias resolved to when this was written; replaced by the
+/// version of a real model id seen in any session of the same family.
+const MODEL_VERSIONS: [(&str, &str); 4] = [
+    ("opus", "5.5"),
+    ("sonnet", "5.5"),
+    ("haiku", "5.5"),
+    ("fable", "5.2"),
+];
+
+/// Family and version of a model id such as `claude-opus-5-5` or
+/// `claude-sonnet-5-5-20261001` -> `("opus", "5.5")`.
+pub fn model_version(id: &str) -> Option<(String, String)> {
+    let mut parts = id.strip_prefix("claude-")?.split('-');
+    let family = parts.next()?.to_owned();
+    let major = parts.next().filter(|p| p.len() <= 2)?.parse::<u32>().ok()?;
+    let version = match parts.next().filter(|p| p.len() <= 2).map(str::parse::<u32>) {
+        Some(Ok(minor)) => format!("{major}.{minor}"),
+        _ => major.to_string(),
+    };
+    Some((family, version))
+}
+
+/// Label of a model alias for the dropdown: `opus` -> `Opus 5.5`. `seen` are
+/// real model ids reported by the CLI; the last one of the family wins.
+pub fn model_label<'a>(alias: &str, seen: impl IntoIterator<Item = &'a str>) -> String {
+    let version = seen
+        .into_iter()
+        .filter_map(model_version)
+        .filter(|(f, _)| f == alias)
+        .map(|(_, v)| v)
+        .last()
+        .or_else(|| {
+            MODEL_VERSIONS
+                .iter()
+                .find(|(a, _)| *a == alias)
+                .map(|(_, v)| (*v).to_owned())
+        });
+    let mut name: String = alias.chars().take(1).flat_map(char::to_uppercase).collect();
+    name.push_str(&alias[alias.chars().next().map_or(0, char::len_utf8)..]);
+    match version {
+        Some(v) => format!("{name} {v}"),
+        None => name,
+    }
+}
+
 /// Modes offered in the header: CLI value and Spanish label.
 pub const MODES: [(&str, &str); 4] = [
     ("default", "Preguntar (default)"),
@@ -124,6 +169,10 @@ pub enum Action {
     NewConversation,
     Select(SessionKey),
     OpenHistory(Box<HistoryEntry>),
+    /// Ask for confirmation before deleting a history entry from disk.
+    AskDeleteHistory(Box<HistoryEntry>),
+    /// Permanently delete a history entry (already confirmed).
+    DeleteHistory(Box<HistoryEntry>),
     /// Resume a finished live session or the open history view.
     ResumeSession(SessionKey),
     ResumeHistory,
@@ -192,6 +241,8 @@ pub struct DeckApp {
     /// Folder (full cwd) the history is restricted to; `None` = all.
     pub history_folder: Option<String>,
     pub history_busy: bool,
+    /// History entry waiting for delete confirmation.
+    pub confirm_delete: Option<HistoryEntry>,
     /// Transcript markdown caches, one per session.
     pub md: HashMap<SessionKey, CommonMarkCache>,
     /// Cache for history/subagent views.
@@ -249,6 +300,7 @@ impl DeckApp {
             history_filter: String::new(),
             history_folder: None,
             history_busy: false,
+            confirm_delete: None,
             md: HashMap::new(),
             shared_md: CommonMarkCache::default(),
             drafts: HashMap::new(),
@@ -609,6 +661,23 @@ impl DeckApp {
                     ctx.request_repaint();
                 });
             }
+            Action::AskDeleteHistory(entry) => self.confirm_delete = Some(*entry),
+            Action::DeleteHistory(entry) => {
+                self.confirm_delete = None;
+                match history::delete_session(&entry.path) {
+                    Ok(()) => {
+                        self.history.retain(|e| e.session_id != entry.session_id);
+                        if matches!(&self.selected, Some(Selected::History(h))
+                            if h.entry.session_id == entry.session_id)
+                        {
+                            self.selected = None;
+                        }
+                    }
+                    Err(e) => {
+                        self.error = Some(format!("No se pudo borrar la conversación: {e}"));
+                    }
+                }
+            }
             Action::ResumeSession(k) => {
                 let Some(s) = self.state.session(k) else {
                     return;
@@ -825,6 +894,7 @@ impl eframe::App for DeckApp {
         sidebar::show(ui, self, &mut actions);
         diff::show(ui, self, &mut actions);
         chat::show(ui, self, &mut actions);
+        sidebar::confirm_delete(ui.ctx(), self, &mut actions);
 
         for a in actions {
             self.perform(a);
@@ -889,6 +959,9 @@ pub fn window_icon() -> egui::IconData {
     }
 }
 
+/// Narrowest width the side panels leave for the conversation.
+pub const MIN_CHAT_WIDTH: f32 = 400.0;
+
 /// Runs `add` inside a column that uses the full available width minus a
 /// small side margin (transcript and input share it).
 pub fn reading_column<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
@@ -901,6 +974,9 @@ pub fn reading_column<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R
         ui.add_space(pad);
         ui.vertical(|ui| {
             ui.set_width(w);
+            // Labels in horizontal rows (tool rows, status lines) must wrap too:
+            // the chat has no horizontal scroll.
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
             ui.spacing_mut().item_spacing.x = 8.0;
             add(ui)
         })
@@ -967,4 +1043,32 @@ pub fn fmt_tokens(n: u64) -> String {
 /// "$0,0564".
 pub fn fmt_cost(c: f64) -> String {
     format!("${c:.4}").replace('.', ",")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{model_label, model_version};
+
+    #[test]
+    fn model_version_parses_ids() {
+        let v = |id| model_version(id).map(|(f, v)| format!("{f} {v}"));
+        assert_eq!(v("claude-opus-5-5").as_deref(), Some("opus 5.5"));
+        assert_eq!(
+            v("claude-sonnet-4-5-20250929").as_deref(),
+            Some("sonnet 4.5")
+        );
+        assert_eq!(v("claude-opus-4-20250514").as_deref(), Some("opus 4"));
+        assert_eq!(v("<synthetic>"), None);
+    }
+
+    #[test]
+    fn model_label_prefers_seen_version() {
+        assert_eq!(model_label("opus", []), "Opus 5.5");
+        assert_eq!(model_label("fable", []), "Fable 5.2");
+        assert_eq!(
+            model_label("sonnet", ["claude-opus-5-5", "claude-sonnet-6-0"]),
+            "Sonnet 6.0"
+        );
+        assert_eq!(model_label("other", []), "Other");
+    }
 }

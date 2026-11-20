@@ -492,6 +492,8 @@ pub enum TaskEvent {
         description: String,
         subagent_type: Option<String>,
         prompt: Option<String>,
+        /// True when the subagent runs in the background.
+        is_backgrounded: bool,
     },
     Progress {
         task_id: String,
@@ -535,6 +537,10 @@ impl TaskEvent {
                 description: get_str(v, "description").unwrap_or_default(),
                 subagent_type: get_str(v, "subagent_type"),
                 prompt: get_str(v, "prompt"),
+                is_backgrounded: v
+                    .get("is_backgrounded")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
             },
             "task_progress" => TaskEvent::Progress {
                 task_id,

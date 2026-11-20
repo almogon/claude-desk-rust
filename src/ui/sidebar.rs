@@ -3,7 +3,7 @@
 use chrono::{DateTime, Local};
 use egui::{Align2, FontId, Frame, Id, Margin, RichText, ScrollArea, Sense, Ui, UiBuilder, vec2};
 
-use super::theme::{self, ACCENT, BG, LINE, MUTED, RAISED, SURFACE, TEXT};
+use super::theme::{self, ACCENT, BG, LINE, MUTED, RAISED, RED, SURFACE, TEXT};
 use super::{Action, DeckApp, Selected, short_dir, trunc};
 use crate::history::{HistoryEntry, is_test_cwd};
 use crate::session::SessionKey;
@@ -14,11 +14,22 @@ pub fn filter_id() -> Id {
     Id::NULL.with("history_filter")
 }
 
+const MIN_WIDTH: f32 = 220.0;
+const MAX_WIDTH: f32 = 520.0;
+
 pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
+    // Leave room for the chat (and the diff panel at its minimum, if open).
+    let reserved = super::MIN_CHAT_WIDTH
+        + if app.settings.diff_open {
+            super::diff::MIN_WIDTH
+        } else {
+            0.0
+        };
+    let max_w = (ui.available_width() - reserved).clamp(MIN_WIDTH, MAX_WIDTH);
     egui::Panel::left("sidebar")
         .resizable(true)
         .default_size(290.0)
-        .size_range(220.0..=520.0)
+        .size_range(MIN_WIDTH..=max_w)
         .frame(
             Frame::new()
                 .fill(SURFACE)
@@ -176,6 +187,36 @@ fn row(ui: &mut Ui, s: &Session, selected: bool, actions: &mut Vec<Action>) {
     resp.context_menu(|ui| session_menu(ui, s, actions));
 }
 
+/// Modal asking to confirm the permanent deletion of a history entry.
+pub fn confirm_delete(ctx: &egui::Context, app: &mut DeckApp, actions: &mut Vec<Action>) {
+    let Some(entry) = &app.confirm_delete else {
+        return;
+    };
+    let mut cancel = false;
+    let modal = egui::Modal::new(Id::NULL.with("confirm_delete_history")).show(ctx, |ui| {
+        ui.set_max_width(380.0);
+        ui.label(theme::semibold("¿Borrar esta conversación?"));
+        ui.add_space(4.0);
+        ui.label(trunc(&entry.title, 80));
+        ui.label(theme::muted(
+            "Se eliminará del disco de forma permanente y no se podrá recuperar.",
+        ));
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            let del = egui::Button::new(RichText::new("Borrar").color(BG)).fill(RED);
+            if ui.add(del).clicked() {
+                actions.push(Action::DeleteHistory(Box::new(entry.clone())));
+            }
+            if ui.button("Cancelar").clicked() {
+                cancel = true;
+            }
+        });
+    });
+    if cancel || modal.should_close() {
+        app.confirm_delete = None;
+    }
+}
+
 /// Day bucket for the history list.
 fn bucket(dt: DateTime<Local>) -> &'static str {
     let today = Local::now().date_naive();
@@ -330,9 +371,21 @@ fn history(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
                     last = b;
                 }
                 let sel = selected_id.as_deref() == Some(e.session_id.as_str());
-                if history_row(ui, e, sel).clicked() {
+                let resp = history_row(ui, e, sel);
+                if resp.clicked() {
                     actions.push(Action::OpenHistory(Box::new(e.clone())));
                 }
+                resp.context_menu(|ui| {
+                    if ui.button("Abrir").clicked() {
+                        actions.push(Action::OpenHistory(Box::new(e.clone())));
+                        ui.close();
+                    }
+                    let del = RichText::new("Borrar conversación…").color(RED);
+                    if ui.button(del).clicked() {
+                        actions.push(Action::AskDeleteHistory(Box::new(e.clone())));
+                        ui.close();
+                    }
+                });
             }
         });
 }

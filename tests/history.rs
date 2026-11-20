@@ -1,6 +1,6 @@
 use std::fs;
 
-use claude_deck::history::{is_test_cwd, load_session, scan_history};
+use claude_deck::history::{delete_session, is_test_cwd, load_session, scan_history};
 use claude_deck::state::Item;
 
 #[test]
@@ -70,4 +70,20 @@ fn scan_and_load() {
             .iter()
             .any(|i| matches!(i, Item::UserText { .. }))
     );
+}
+
+#[test]
+fn delete_removes_file_and_sidecar() {
+    let tmp = tempfile::tempdir().unwrap();
+    let proj = tmp.path().join("C--some-project");
+    fs::create_dir_all(proj.join(ID).join("subagents")).unwrap();
+    let file = proj.join(format!("{ID}.jsonl"));
+    fs::write(&file, SAMPLE).unwrap();
+    fs::write(proj.join("other.jsonl"), SAMPLE).unwrap();
+
+    delete_session(&file).unwrap();
+    assert!(!file.exists());
+    assert!(!proj.join(ID).exists());
+    assert!(proj.join("other.jsonl").exists());
+    assert_eq!(scan_history(tmp.path(), 10).len(), 1);
 }

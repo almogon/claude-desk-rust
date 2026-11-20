@@ -252,6 +252,10 @@ fn subagent_is_isolated() {
     assert!(sub.summary.as_deref().unwrap().contains("AZUL"));
     assert!(sub.message_count >= 2 && sub.tool_count >= 1);
     assert!(sub.last_activity.is_some());
+    assert!(!sub.background);
+    assert_eq!(sub.total_tokens, Some(25608));
+    assert!(sub.tokens().output > 0 || sub.tokens().cache_creation > 0);
+    assert_eq!(sub.tokens_total(), 25608);
     assert!(sub.items.iter().any(|i| matches!(i, Item::ToolUse { .. })));
     assert!(matches!(&s.transcript[0], Item::UserText { .. }));
     let main_tools: Vec<_> = s
@@ -271,6 +275,39 @@ fn subagent_is_isolated() {
         count(&s.transcript, |i| matches!(i, Item::TurnSummary(_))),
         1
     );
+}
+
+#[test]
+fn background_subagent_survives_agent_tool_result() {
+    // Lines: init, Agent tool_use, task_started, Agent tool_result (async
+    // launch), then the subagent's own events. Stop right after the result.
+    let key = SessionKey::new();
+    let mut st = AppState::new();
+    st.add_session(NewSession::new(key, "C:\\work"));
+    st.apply(&ev(key, SessionEventKind::Spawned { pid: Some(1) }));
+    st.apply(&ev(
+        key,
+        SessionEventKind::UserSent {
+            text: "hola".into(),
+            attachments: Vec::new(),
+        },
+    ));
+    for line in fixture_lines("subagent_background").iter().take(4) {
+        st.apply(&incoming(key, line));
+    }
+    let sub = &st.session(key).unwrap().subagents[0];
+    assert!(sub.background);
+    assert_eq!(sub.status, SubagentStatus::Running);
+    assert!(sub.ended_at.is_none());
+
+    let (st, key) = replay("subagent_background", |_| None, noop);
+    let s = st.session(key).unwrap();
+    assert_eq!(s.subagents.len(), 1);
+    let sub = &s.subagents[0];
+    assert!(sub.background);
+    assert_eq!(sub.status, SubagentStatus::Completed);
+    assert!(sub.ended_at.is_some());
+    assert_eq!(sub.total_tokens, Some(25608));
 }
 
 #[test]

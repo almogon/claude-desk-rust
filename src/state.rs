@@ -149,9 +149,57 @@ pub struct Subagent {
     pub summary: Option<String>,
     /// The subagent's own transcript.
     pub items: Vec<Item>,
+    /// Runs in the background: the Agent `tool_result` arrives right away and
+    /// does not mark its end.
+    pub background: bool,
+    /// Total tokens reported by the CLI (max seen in task events, 0 ignored).
+    pub total_tokens: Option<u64>,
+    /// Usage per assistant `message_id`. The CLI emits one event per content
+    /// block with the same usage, so a repeated id overwrites.
+    pub msg_usage: Vec<(String, TokenTotals)>,
 }
 
 impl Subagent {
+    /// Sum of the usage of all the subagent's assistant messages.
+    pub fn tokens(&self) -> TokenTotals {
+        let mut t = TokenTotals::default();
+        for (_, u) in &self.msg_usage {
+            t.input += u.input;
+            t.output += u.output;
+            t.cache_read += u.cache_read;
+            t.cache_creation += u.cache_creation;
+        }
+        t
+    }
+
+    /// CLI-reported total if known, else the sum of the counted usage.
+    pub fn tokens_total(&self) -> u64 {
+        self.total_tokens.unwrap_or_else(|| {
+            let t = self.tokens();
+            t.input + t.output + t.cache_read + t.cache_creation
+        })
+    }
+
+    fn record_usage(&mut self, message_id: Option<&str>, usage: &crate::protocol::Usage) {
+        let totals = TokenTotals::from_usage(usage);
+        match message_id {
+            Some(id) => {
+                if let Some(e) = self.msg_usage.iter_mut().find(|(i, _)| i == id) {
+                    e.1 = totals;
+                } else {
+                    self.msg_usage.push((id.to_owned(), totals));
+                }
+            }
+            None => self.msg_usage.push((String::new(), totals)),
+        }
+    }
+
+    fn note_total_tokens(&mut self, total: u64) {
+        if total > 0 {
+            self.total_tokens = Some(self.total_tokens.map_or(total, |t| t.max(total)));
+        }
+    }
+
     fn new(tool_use_id: &str, now: DateTime<Local>) -> Subagent {
         Subagent {
             tool_use_id: tool_use_id.to_owned(),
@@ -167,6 +215,9 @@ impl Subagent {
             tool_count: 0,
             summary: None,
             items: Vec::new(),
+            background: false,
+            total_tokens: None,
+            msg_usage: Vec::new(),
         }
     }
 }
@@ -196,6 +247,13 @@ pub struct TokenTotals {
 }
 
 impl TokenTotals {
+    /// Totals of a single usage record.
+    pub fn from_usage(u: &crate::protocol::Usage) -> TokenTotals {
+        let mut t = TokenTotals::default();
+        t.add(u);
+        t
+    }
+
     fn add(&mut self, u: &crate::protocol::Usage) {
         self.input += u.input_tokens;
         self.output += u.output_tokens;
@@ -822,6 +880,7 @@ impl Session {
         {
             let sub = &mut self.subagents[si];
             sub.message_count += 1;
+            sub.record_usage(a.message_id.as_deref(), &a.usage);
             if let Some(m) = &a.model
                 && m != "<synthetic>"
             {
@@ -876,6 +935,10 @@ impl Session {
                             .get("subagent_type")
                             .and_then(Value::as_str)
                             .map(str::to_owned);
+                        sub.background = input
+                            .get("run_in_background")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false);
                         self.subagents.push(sub);
                     }
                 }
@@ -924,6 +987,7 @@ impl Session {
                         .iter_mut()
                         .find(|s| &s.tool_use_id == tool_use_id)
                         && sub.status == SubagentStatus::Running
+                        && !sub.background
                     {
                         sub.status = if *is_error {
                             SubagentStatus::Failed
@@ -949,12 +1013,16 @@ impl Session {
                 tool_use_id,
                 description,
                 subagent_type,
+                is_backgrounded,
                 ..
             } => {
                 let Some(tu) = tool_use_id else { return };
                 let idx = self.subagent_index(Some(tu), None, now).unwrap();
                 let s = &mut self.subagents[idx];
                 s.agent_id = Some(task_id.clone());
+                if *is_backgrounded {
+                    s.background = true;
+                }
                 if !description.is_empty() {
                     s.description = description.clone();
                 }
@@ -979,6 +1047,7 @@ impl Session {
                     s.last_activity = Some(truncate_title(d, 80));
                 }
                 s.tool_count = s.tool_count.max(usage.tool_uses as u32);
+                s.note_total_tokens(usage.total_tokens);
             }
             TaskEvent::Updated {
                 task_id,
@@ -1019,6 +1088,7 @@ impl Session {
                     s.summary = summary.clone();
                 }
                 s.tool_count = s.tool_count.max(usage.tool_uses as u32);
+                s.note_total_tokens(usage.total_tokens);
             }
         }
     }
