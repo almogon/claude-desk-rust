@@ -1,0 +1,2 @@
+{"type":"control_request","request_id":"init1","request":{"subtype":"initialize","hooks":{"PreToolUse":[{"matcher":"Read|PowerShell|Bash","hookCallbackIds":["read_guard"]}]}}}
+{"type":"control_response","response":{"subtype":"success","request_id":"11111111-2222-4333-8444-555555555555","response":{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Blocked: file has 400 lines"}}}}

@@ -1283,6 +1283,15 @@ impl AppState {
                 SessionEventKind::InitializeRequested { request_id } => {
                     s.initialize_request = Some(request_id.clone());
                 }
+                SessionEventKind::ReadBlocked { reason, .. } => {
+                    let r: String = reason.chars().take(200).collect();
+                    let ell = if reason.chars().count() > 200 {
+                        "…"
+                    } else {
+                        ""
+                    };
+                    s.note(NoteKind::Info, format!("Lectura bloqueada: {r}{ell}"), now);
+                }
                 SessionEventKind::InterruptRequested => {
                     s.note(NoteKind::Info, "Interrumpido por el usuario.".into(), now)
                 }

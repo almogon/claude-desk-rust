@@ -72,7 +72,8 @@ pub fn card(
 
     let is_plan = p.tool_name == "ExitPlanMode";
     let is_ask = p.tool_name == "AskUserQuestion";
-    let deny_id = ui.make_persistent_id(("deny_open", &p.request_id));
+    let ui_id = ui.make_persistent_id(("perm_ui", &p.request_id));
+    let mut st: CardUi = ui.data(|d| d.get_temp(ui_id)).unwrap_or_default();
     let plan_id = ui.make_persistent_id(("plan_edit", &p.request_id));
     let mut plan_st: PlanEdit = ui.data(|d| d.get_temp(plan_id)).unwrap_or_default();
     Frame::new()
@@ -131,62 +132,19 @@ pub fn card(
                 });
             }
 
-            let (yes, no) = if is_plan {
-                ("Aprobar plan", "Seguir planificando…")
-            } else if is_ask {
-                ("Enviar respuestas", "Denegar…")
-            } else {
-                ("Permitir", "Denegar…")
-            };
-            let allow = |updated_permissions: Vec<Value>| Action::Permission {
-                key,
-                request_id: p.request_id.clone(),
-                decision: PermissionDecision::Allow {
-                    updated_input: p.input.clone(),
-                    updated_permissions,
-                },
-            };
-            let deny_open = ui.data(|d| d.get_temp::<bool>(deny_id)).unwrap_or(false);
             ui.add_space(4.0);
-            if !deny_open {
-                ui.horizontal_wrapped(|ui| {
-                    let primary = |label: &str| {
-                        egui::Button::new(RichText::new(label).color(BG))
-                            .fill(ACCENT)
-                            .stroke(Stroke::NONE)
-                    };
-                    if is_plan {
-                        let updated = plan_updated_input(
-                            &p.input,
-                            plan_st.editing.then_some(plan_st.text.as_str()),
-                        );
-                        for (label, mode) in PLAN_APPROVALS {
-                            if ui.add(primary(label)).clicked() {
-                                actions.push(Action::ApprovePlan {
-                                    key,
-                                    request_id: p.request_id.clone(),
-                                    updated_input: updated.clone(),
-                                    mode,
-                                });
-                            }
-                        }
-                        let edit_label = if plan_st.editing {
-                            "Descartar edición"
-                        } else {
-                            "Editar plan"
-                        };
-                        if ui.button(edit_label).clicked() {
-                            if plan_st.editing {
-                                plan_st = PlanEdit::default();
-                            } else {
-                                plan_st.editing = true;
-                                plan_st.text = plan.to_owned();
-                            }
-                        }
-                    } else if is_ask {
+            let primary = |label: &str| {
+                egui::Button::new(RichText::new(label).color(BG))
+                    .fill(ACCENT)
+                    .stroke(Stroke::NONE)
+            };
+
+            if is_ask {
+                if !st.deny_open {
+                    ui.horizontal_wrapped(|ui| {
                         let ready = ask_input.is_some();
                         if ui
-                            .add_enabled(ready, primary(yes))
+                            .add_enabled(ready, primary("Enviar respuestas"))
                             .on_disabled_hover_text("Responde todas las preguntas.")
                             .clicked()
                             && let Some(updated_input) = ask_input.clone()
@@ -198,36 +156,188 @@ pub fn card(
                                     updated_input,
                                     updated_permissions: Vec::new(),
                                 },
+                                note: None,
                             });
                         }
-                    } else if ui.add(primary(yes)).clicked() {
-                        actions.push(allow(Vec::new()));
-                    }
-                    if !is_plan && !is_ask {
-                        if let Some(rule) = p.add_rules_suggestion() {
-                            if ui
-                                .button("Permitir siempre")
-                                .on_hover_text(always_tooltip(rule))
-                                .clicked()
+                        if ui.button("Denegar…").clicked() {
+                            st.deny_open = true;
+                        }
+                    });
+                }
+            } else {
+                let choices = if is_plan {
+                    plan_choices()
+                } else {
+                    tool_choices(p)
+                };
+                let deny_idx = choices.len() - 1;
+                st.selected = st.selected.min(deny_idx);
+
+                // Only the first pending card drawn in a pass owns the keyboard.
+                let ctx = ui.ctx().clone();
+                let owner_id = egui::Id::NULL.with("perm_key_owner");
+                let pass = ctx.cumulative_pass_nr();
+                let (owner_pass, owner_rid): (u64, String) =
+                    ctx.data(|d| d.get_temp(owner_id)).unwrap_or_default();
+                let owns = if owner_pass == pass && owner_pass != 0 {
+                    owner_rid == p.request_id
+                } else {
+                    ctx.data_mut(|d| d.insert_temp(owner_id, (pass, p.request_id.clone())));
+                    true
+                };
+                let note_id = ui.make_persistent_id(("perm_note", &p.request_id));
+                let focused = ui.memory(|m| m.focused());
+                let can_keys = owns && !st.deny_open && (focused.is_none() || focused == Some(note_id));
+
+                let mut confirm: Option<usize> = None;
+                if can_keys {
+                    ui.input_mut(|i| {
+                        use egui::{Key, Modifiers};
+                        let is_sel_allow = !matches!(choices[st.selected].kind, ChoiceKind::Deny);
+                        if st.note_open {
+                            if i.consume_key(Modifiers::NONE, Key::Escape)
+                                || i.consume_key(Modifiers::NONE, Key::Tab)
                             {
-                                actions.push(allow(vec![rule.clone()]));
+                                st.note_open = false;
+                            } else if i.consume_key(Modifiers::NONE, Key::Enter) {
+                                confirm = Some(st.selected);
                             }
-                        } else if let Some(mode) = p.accept_edits_suggestion()
-                            && ui
-                                .button("Aceptar ediciones en esta sesión")
-                                .on_hover_text(
-                                    "Las ediciones siguientes no pedirán permiso hasta que termine la sesión.",
+                            return;
+                        }
+                        if i.consume_key(Modifiers::NONE, Key::ArrowUp) {
+                            st.selected = move_sel(st.selected, -1, choices.len());
+                        }
+                        if i.consume_key(Modifiers::NONE, Key::ArrowDown) {
+                            st.selected = move_sel(st.selected, 1, choices.len());
+                        }
+                        const DIGITS: [Key; 9] = [
+                            Key::Num1,
+                            Key::Num2,
+                            Key::Num3,
+                            Key::Num4,
+                            Key::Num5,
+                            Key::Num6,
+                            Key::Num7,
+                            Key::Num8,
+                            Key::Num9,
+                        ];
+                        for (n, k) in DIGITS.into_iter().enumerate() {
+                            if i.consume_key(Modifiers::NONE, k)
+                                && let Some(idx) = digit_index(n + 1, choices.len())
+                            {
+                                st.selected = idx;
+                                confirm = Some(idx);
+                            }
+                        }
+                        if i.consume_key(Modifiers::NONE, Key::Enter) {
+                            confirm = Some(st.selected);
+                        }
+                        if i.consume_key(Modifiers::NONE, Key::Escape) {
+                            st.selected = deny_idx;
+                            st.deny_open = true;
+                        }
+                        if is_sel_allow && i.consume_key(Modifiers::NONE, Key::Tab) {
+                            st.note_open = true;
+                            st.focus_note = true;
+                        }
+                    });
+                }
+
+                for (i, c) in choices.iter().enumerate() {
+                    let is_sel = st.selected == i;
+                    let text = RichText::new(format!("{}. {}", i + 1, c.label));
+                    let text = if is_sel { text.color(ACCENT) } else { text };
+                    let mut r = ui.selectable_label(is_sel, text);
+                    if let Some(t) = &c.tooltip {
+                        r = r.on_hover_text(t);
+                    }
+                    if r.clicked() {
+                        confirm = Some(i);
+                        // The note only applies to the row it was opened on.
+                        if st.selected != i {
+                            st.note_open = false;
+                        }
+                        st.selected = i;
+                    }
+                    let is_allow = !matches!(c.kind, ChoiceKind::Deny);
+                    if is_sel && is_allow {
+                        ui.horizontal(|ui| {
+                            ui.add_space(18.0);
+                            if st.note_open {
+                                let r = ui.add(
+                                    egui::TextEdit::singleline(&mut st.note)
+                                        .id(note_id)
+                                        .hint_text("Instrucciones adicionales para Claude")
+                                        .desired_width(f32::INFINITY),
+                                );
+                                if st.focus_note {
+                                    r.request_focus();
+                                    st.focus_note = false;
+                                }
+                            } else {
+                                let hint = egui::Label::new(
+                                    RichText::new("Tab para añadir instrucciones")
+                                        .small()
+                                        .color(MUTED),
                                 )
-                                .clicked()
-                        {
-                            actions.push(allow(vec![mode.clone()]));
+                                .sense(egui::Sense::click());
+                                if ui.add(hint).clicked() {
+                                    st.note_open = true;
+                                    st.focus_note = true;
+                                }
+                            }
+                        });
+                    }
+                }
+
+                if let Some(idx) = confirm {
+                    let c = &choices[idx];
+                    let note = (st.note_open && st.selected == idx).then(|| st.note.clone());
+                    match &c.kind {
+                        ChoiceKind::Allow(perms) => actions.push(Action::Permission {
+                            key,
+                            request_id: p.request_id.clone(),
+                            decision: PermissionDecision::Allow {
+                                updated_input: p.input.clone(),
+                                updated_permissions: perms.clone(),
+                            },
+                            note,
+                        }),
+                        ChoiceKind::Plan(mode) => actions.push(Action::ApprovePlan {
+                            key,
+                            request_id: p.request_id.clone(),
+                            updated_input: plan_updated_input(
+                                &p.input,
+                                plan_st.editing.then_some(plan_st.text.as_str()),
+                            ),
+                            mode: *mode,
+                            note,
+                        }),
+                        ChoiceKind::Deny => {
+                            st.selected = idx;
+                            st.deny_open = true;
                         }
                     }
-                    if ui.button(no).clicked() {
-                        ui.data_mut(|d| d.insert_temp(deny_id, true));
+                }
+
+                if is_plan {
+                    let edit_label = if plan_st.editing {
+                        "Descartar edición"
+                    } else {
+                        "Editar plan"
+                    };
+                    if ui.button(edit_label).clicked() {
+                        if plan_st.editing {
+                            plan_st = PlanEdit::default();
+                        } else {
+                            plan_st.editing = true;
+                            plan_st.text = plan.to_owned();
+                        }
                     }
-                });
-            } else {
+                }
+            }
+
+            if st.deny_open {
                 let reason = reasons.entry(p.request_id.clone()).or_default();
                 ui.add(
                     egui::TextEdit::singleline(reason)
@@ -252,23 +362,117 @@ pub fn card(
                             key,
                             request_id: p.request_id.clone(),
                             decision: PermissionDecision::Deny { message },
+                            note: None,
                         });
                     }
                     if ui.button("Cancelar").clicked() {
-                        ui.data_mut(|d| d.insert_temp(deny_id, false));
+                        st.deny_open = false;
                     }
                 });
             }
         });
-    ui.data_mut(|d| d.insert_temp(plan_id, plan_st));
+    ui.data_mut(|d| {
+        d.insert_temp(plan_id, plan_st);
+        d.insert_temp(ui_id, st);
+    });
 }
 
-/// "Approve and switch to <mode>" buttons of the plan card.
-const PLAN_APPROVALS: [(&str, PermissionMode); 3] = [
-    ("Aprobar y modo auto", PermissionMode::Auto),
-    ("Aprobar y aceptar ediciones", PermissionMode::AcceptEdits),
-    ("Aprobar y preguntar", PermissionMode::Default),
-];
+/// One numbered option of the permission card.
+#[derive(Debug, Clone, PartialEq)]
+struct Choice {
+    label: String,
+    tooltip: Option<String>,
+    kind: ChoiceKind,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum ChoiceKind {
+    /// Allow, with these `updated_permissions`.
+    Allow(Vec<Value>),
+    /// Approve the plan and switch to this mode.
+    Plan(PermissionMode),
+    Deny,
+}
+
+fn choice(label: &str, tooltip: Option<String>, kind: ChoiceKind) -> Choice {
+    Choice {
+        label: label.to_owned(),
+        tooltip,
+        kind,
+    }
+}
+
+/// Options of a regular tool permission card.
+fn tool_choices(p: &PermissionItem) -> Vec<Choice> {
+    let mut out = vec![choice("Sí", None, ChoiceKind::Allow(Vec::new()))];
+    if let Some(rule) = p.add_rules_suggestion() {
+        out.push(choice(
+            "Sí, y no volver a preguntar",
+            Some(always_tooltip(rule)),
+            ChoiceKind::Allow(vec![rule.clone()]),
+        ));
+    } else if let Some(mode) = p.accept_edits_suggestion() {
+        out.push(choice(
+            "Sí, y aceptar ediciones en esta sesión",
+            Some(
+                "Las ediciones siguientes no pedirán permiso hasta que termine la sesión."
+                    .to_owned(),
+            ),
+            ChoiceKind::Allow(vec![mode.clone()]),
+        ));
+    }
+    out.push(choice(
+        "No, y decirle a Claude qué hacer distinto",
+        None,
+        ChoiceKind::Deny,
+    ));
+    out
+}
+
+/// Options of the `ExitPlanMode` card.
+fn plan_choices() -> Vec<Choice> {
+    vec![
+        choice(
+            "Sí, y modo auto",
+            None,
+            ChoiceKind::Plan(PermissionMode::Auto),
+        ),
+        choice(
+            "Sí, y aceptar ediciones",
+            None,
+            ChoiceKind::Plan(PermissionMode::AcceptEdits),
+        ),
+        choice(
+            "Sí, y preguntar en cada edición",
+            None,
+            ChoiceKind::Plan(PermissionMode::Default),
+        ),
+        choice("No, seguir planificando", None, ChoiceKind::Deny),
+    ]
+}
+
+/// Moves the selection by `delta`, clamped to `0..len`.
+fn move_sel(sel: usize, delta: i32, len: usize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    (sel as i64 + delta as i64).clamp(0, len as i64 - 1) as usize
+}
+
+/// Maps a typed digit (1-based) to an option index; out of range is ignored.
+fn digit_index(digit: usize, len: usize) -> Option<usize> {
+    (digit >= 1 && digit <= len).then(|| digit - 1)
+}
+
+/// Selection state of the permission card (egui temp memory, keyed by request id).
+#[derive(Clone, Default)]
+struct CardUi {
+    selected: usize,
+    note_open: bool,
+    focus_note: bool,
+    note: String,
+    deny_open: bool,
+}
 
 /// Edit state of the plan card (egui temp memory, keyed by request id).
 #[derive(Clone, Default)]
@@ -493,6 +697,77 @@ mod tests {
         assert!(build_ask_input(&input(), &[]).is_none());
         assert!(build_ask_input(&json!({"questions":[]}), &[]).is_none());
         assert!(build_ask_input(&json!({}), &[]).is_none());
+    }
+
+    fn item(suggestions: Vec<Value>) -> PermissionItem {
+        PermissionItem {
+            request_id: "r1".into(),
+            tool_name: "Bash".into(),
+            description: None,
+            input: json!({}),
+            tool_use_id: None,
+            suggestions,
+            resolved: None,
+        }
+    }
+
+    fn kinds(cs: &[Choice]) -> Vec<&ChoiceKind> {
+        cs.iter().map(|c| &c.kind).collect()
+    }
+
+    #[test]
+    fn tool_choices_with_add_rules() {
+        let rule = json!({"type":"addRules","rules":[{"toolName":"Bash"}],"destination":"session"});
+        let cs = tool_choices(&item(vec![rule.clone()]));
+        assert_eq!(cs.len(), 3);
+        assert_eq!(cs[0].label, "Sí");
+        assert_eq!(cs[1].label, "Sí, y no volver a preguntar");
+        assert!(cs[1].tooltip.is_some());
+        assert_eq!(*kinds(&cs)[1], ChoiceKind::Allow(vec![rule]));
+        assert_eq!(cs[2].kind, ChoiceKind::Deny);
+    }
+
+    #[test]
+    fn tool_choices_with_set_mode_only() {
+        let m = json!({"type":"setMode","mode":"acceptEdits"});
+        let cs = tool_choices(&item(vec![m.clone()]));
+        assert_eq!(cs.len(), 3);
+        assert_eq!(cs[1].label, "Sí, y aceptar ediciones en esta sesión");
+        assert_eq!(cs[1].kind, ChoiceKind::Allow(vec![m]));
+    }
+
+    #[test]
+    fn tool_choices_without_suggestions() {
+        let cs = tool_choices(&item(vec![]));
+        assert_eq!(cs.len(), 2);
+        assert_eq!(cs[0].kind, ChoiceKind::Allow(vec![]));
+        assert_eq!(cs[1].kind, ChoiceKind::Deny);
+    }
+
+    #[test]
+    fn plan_choices_lists_modes_then_deny() {
+        let cs = plan_choices();
+        assert_eq!(
+            kinds(&cs),
+            vec![
+                &ChoiceKind::Plan(PermissionMode::Auto),
+                &ChoiceKind::Plan(PermissionMode::AcceptEdits),
+                &ChoiceKind::Plan(PermissionMode::Default),
+                &ChoiceKind::Deny
+            ]
+        );
+    }
+
+    #[test]
+    fn selection_clamps_and_digits_are_bounded() {
+        assert_eq!(move_sel(0, -1, 3), 0);
+        assert_eq!(move_sel(1, 1, 3), 2);
+        assert_eq!(move_sel(2, 1, 3), 2);
+        assert_eq!(move_sel(0, 1, 0), 0);
+        assert_eq!(digit_index(1, 3), Some(0));
+        assert_eq!(digit_index(3, 3), Some(2));
+        assert_eq!(digit_index(4, 3), None);
+        assert_eq!(digit_index(0, 3), None);
     }
 
     #[test]

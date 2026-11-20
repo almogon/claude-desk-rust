@@ -86,6 +86,8 @@ Sequence: `assistant`(tool_use) arrives, then `control_request` (it can come bef
 Allow (worked): `{"type":"control_response","response":{"subtype":"success","request_id":"<id>","response":{"behavior":"allow","updatedInput":<input>}}}` -> tool_result "File created successfully", `permission_decision.source:"user_temporary"`.
 Deny (worked): `...,"response":{"behavior":"deny","message":"Denegado..."}` -> tool_result `{"content":"<message>","is_error":true}`, `non_execution_kind:"permission-rule"`, `permission_decision.source:"user_reject"`; the `result.permission_denials` lists the call; the model then continues and writes a final reply. Not tested here: `interrupt:true` in deny. `updatedPermissions` in allow: see section 11.
 
+Allow has no `message` field, so the client implements "yes + extra instructions" as a plain allow followed by a regular user message (the CLI queues messages sent mid-turn).
+
 ## 6. Case `controls` (client -> CLI control_requests)
 
 | subtype | request | success response `response.response` |
@@ -234,3 +236,21 @@ Shapes (abbreviated):
 {"type":"tool_result","content":"Updated task #1 status"}   // tool_use_result: {"success":true,"taskId":"1","updatedFields":["status"],"statusChange":{"from":"pending","to":"in_progress"}}
 ```
 Ids are sequential numeric strings from "1" and only appear in the result. Observed order: all `TaskCreate` calls first, then per task `TaskUpdate in_progress`, the work, `TaskUpdate completed`. `TaskList` / `TaskGet` were not called in the capture. `Session::todos()` also accepts the older `TodoWrite` (`input.todos[]{content,status,activeForm}`, last call wins).
+
+## 15. Hooks (PreToolUse callback)
+
+Fixture: `tests/fixtures/hook_callback.jsonl` (+ `.stdin.jsonl`), real run (Claude Code, `--model haiku`, `--permission-prompt-tool stdio`, `bypassPermissions`, 400-line file in a temp dir), sanitized. Two runs, deny and allow, both worked as below.
+
+In-process hooks are registered in the `initialize` control request (the response still carries the slash `commands`):
+```json
+{"type":"control_request","request_id":"init1","request":{"subtype":"initialize","hooks":{"PreToolUse":[{"matcher":"Read|PowerShell|Bash","hookCallbackIds":["read_guard"]}]}}}
+```
+Before every matching tool call the CLI sends a `hook_callback` control_request and BLOCKS until it gets the reply (always answer):
+```json
+{"type":"control_request","request_id":"<id>","request":{"subtype":"hook_callback","callback_id":"read_guard","input":{"session_id":"...","transcript_path":"...","cwd":"C:\\work\\demo","permission_mode":"bypassPermissions","hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"C:\\work\\demo\\big.txt"},"tool_use_id":"toolu_..."},"tool_use_id":"toolu_..."}}
+```
+Deny reply; allow is an empty `response` (`{}`):
+```json
+{"type":"control_response","response":{"subtype":"success","request_id":"<id>","response":{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"..."}}}}
+```
+On deny the model gets a `tool_result` with `is_error:true` and content `PreToolUse:Read hook error: <reason>`; the tool does not run. The model may retry with other input (observed: `allow_large:true` in `Read` input), and each retry triggers a new callback. The tool call never reaches `can_use_tool`. claude-deck answers from the stdout reader task (`read_guard::check`), never waiting for the UI, and shows a `Lectura bloqueada: ...` note in the chat.
