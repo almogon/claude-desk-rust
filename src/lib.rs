@@ -11,6 +11,7 @@
 pub mod git;
 pub mod history;
 pub mod protocol;
+pub mod read_guard;
 pub mod session;
 pub mod state;
 pub mod tools;

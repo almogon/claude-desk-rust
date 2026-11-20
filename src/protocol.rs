@@ -193,6 +193,24 @@ pub fn permission_response_line(request_id: &str, decision: &PermissionDecision)
     .to_string()
 }
 
+/// Builds the `control_response` line answering a `hook_callback` request of a
+/// `PreToolUse` hook: `Some(reason)` denies the tool call, `None` allows it.
+pub fn hook_response_line(request_id: &str, deny_reason: Option<&str>) -> String {
+    let response = match deny_reason {
+        Some(reason) => json!({"hookSpecificOutput":{
+            "hookEventName":"PreToolUse",
+            "permissionDecision":"deny",
+            "permissionDecisionReason":reason
+        }}),
+        None => json!({}),
+    };
+    json!({
+        "type":"control_response",
+        "response":{"subtype":"success","request_id":request_id,"response":response}
+    })
+    .to_string()
+}
+
 // ---------------------------------------------------------------------------
 // Content blocks and usage
 // ---------------------------------------------------------------------------
@@ -746,6 +764,13 @@ pub enum ControlRequestBody {
     /// The CLI asks permission to run a tool. Answer with
     /// `SessionHandle::respond_permission`.
     CanUseTool(CanUseTool),
+    /// The CLI calls a hook registered in `initialize` (see `hook_response_line`).
+    HookCallback {
+        callback_id: String,
+        /// Hook input (`hook_event_name`, `tool_name`, `tool_input`, `cwd`, ...).
+        input: Value,
+        tool_use_id: Option<String>,
+    },
     /// Any other subtype; raw request preserved.
     Other { subtype: String, raw: Value },
 }
@@ -780,6 +805,12 @@ impl ControlRequest {
                     .cloned()
                     .unwrap_or_default(),
             })
+        } else if subtype == "hook_callback" {
+            ControlRequestBody::HookCallback {
+                callback_id: get_str(&req, "callback_id").unwrap_or_default(),
+                input: req.get("input").cloned().unwrap_or(Value::Null),
+                tool_use_id: get_str(&req, "tool_use_id"),
+            }
         } else {
             ControlRequestBody::Other { subtype, raw: req }
         };
@@ -846,6 +877,44 @@ mod tests {
             "<optional custom summarization instructions>"
         );
         assert!(compact.builtin);
+    }
+
+    const HOOK: &str = include_str!("../tests/fixtures/hook_callback.jsonl");
+    const HOOK_STDIN: &str = include_str!("../tests/fixtures/hook_callback.stdin.jsonl");
+
+    #[test]
+    fn hook_callback_parses() {
+        let line = HOOK.lines().next().unwrap();
+        let Incoming::ControlRequest(cr) = Incoming::parse_line(line).unwrap() else {
+            panic!("expected control_request")
+        };
+        match cr.body {
+            ControlRequestBody::HookCallback {
+                callback_id,
+                input,
+                tool_use_id,
+            } => {
+                assert_eq!(callback_id, "read_guard");
+                assert_eq!(input["tool_name"], "Read");
+                assert_eq!(input["tool_input"]["file_path"], "C:\\work\\demo\\big.txt");
+                assert_eq!(input["cwd"], "C:\\work\\demo");
+                assert_eq!(tool_use_id.as_deref(), Some("toolu_01example"));
+            }
+            other => panic!("expected hook_callback, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn hook_response_matches_capture() {
+        let want: Value = serde_json::from_str(HOOK_STDIN.lines().nth(1).unwrap()).unwrap();
+        let got = hook_response_line(
+            "11111111-2222-4333-8444-555555555555",
+            Some("Blocked: file has 400 lines"),
+        );
+        assert_eq!(serde_json::from_str::<Value>(&got).unwrap(), want);
+        let allow: Value = serde_json::from_str(&hook_response_line("x", None)).unwrap();
+        assert_eq!(allow["response"]["request_id"], "x");
+        assert_eq!(allow["response"]["response"], json!({}));
     }
 
     #[test]

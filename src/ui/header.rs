@@ -174,6 +174,18 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
                         actions.push(Action::SetModel(model));
                     }
 
+                    // Read guard (per session): blocks reading whole big files
+                    if let Some(h) = live.and_then(|k| app.handles.get(&k)) {
+                        let mut on = h.read_guard_enabled();
+                        if ui
+                            .checkbox(&mut on, "Grep")
+                            .on_hover_text("Bloquea leer enteros archivos de más de 300 líneas")
+                            .changed()
+                        {
+                            h.set_read_guard(on);
+                        }
+                    }
+
                     // Center: conversation title + state chip
                     ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                         let Some(t) = conv_title else { return };

@@ -24,9 +24,58 @@ use tokio::runtime::Runtime;
 use tokio::sync::{mpsc as tmpsc, oneshot};
 
 use crate::protocol::{
-    Attachment, AttachmentSummary, Incoming, PermissionDecision, PermissionMode,
-    control_request_line, permission_response_line, user_message_blocks_line, user_message_line,
+    Attachment, AttachmentSummary, ControlRequestBody, Incoming, PermissionDecision,
+    PermissionMode, control_request_line, hook_response_line, permission_response_line,
+    user_message_blocks_line, user_message_line,
 };
+
+/// Callback id of the in-process `PreToolUse` read guard hook.
+const READ_GUARD_ID: &str = "read_guard";
+
+/// `hooks` field of the `initialize` request: registers the read guard.
+fn hooks_config() -> serde_json::Value {
+    json!({"PreToolUse":[{"matcher":"Read|PowerShell|Bash","hookCallbackIds":[READ_GUARD_ID]}]})
+}
+
+/// Answers a `hook_callback` right away (the CLI blocks until it gets a reply)
+/// and emits `ReadBlocked` on deny. Runs on a blocking thread because the
+/// guard reads files.
+fn answer_hook(
+    request_id: String,
+    callback_id: String,
+    input: serde_json::Value,
+    default_cwd: PathBuf,
+    guard_on: bool,
+    stdin_tx: tmpsc::UnboundedSender<String>,
+    em: Emitter,
+) {
+    let mut denied = None;
+    if guard_on && callback_id == READ_GUARD_ID {
+        let tool = input
+            .get("tool_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_owned();
+        let cwd = input
+            .get("cwd")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from)
+            .unwrap_or(default_cwd);
+        let tool_input = input.get("tool_input").cloned().unwrap_or_default();
+        if let Some(reason) =
+            crate::read_guard::check(&tool, &tool_input, &cwd, crate::read_guard::MAX_LINES)
+        {
+            denied = Some((tool, reason));
+        }
+    }
+    let _ = stdin_tx.send(hook_response_line(
+        &request_id,
+        denied.as_ref().map(|(_, r)| r.as_str()),
+    ));
+    if let Some((tool, reason)) = denied {
+        em.emit(SessionEventKind::ReadBlocked { tool, reason });
+    }
+}
 
 /// Callback invoked after every emitted event (e.g. `ctx.request_repaint`).
 pub type Notifier = Arc<dyn Fn() + Send + Sync>;
@@ -87,6 +136,9 @@ pub enum SessionEventKind {
     InterruptRequested,
     /// The client sent the `initialize` control request (to get slash commands).
     InitializeRequested { request_id: String },
+    /// The read guard denied a tool call (answered in-process, never shown as
+    /// a permission request).
+    ReadBlocked { tool: String, reason: String },
     /// A parsed stdout message from the CLI.
     Incoming(Box<Incoming>),
     /// A stdout line that is not valid JSON.
@@ -227,6 +279,7 @@ pub struct SessionHandle {
     stdin_tx: tmpsc::UnboundedSender<String>,
     kill_tx: Mutex<Option<oneshot::Sender<()>>>,
     killed: Arc<AtomicBool>,
+    read_guard: Arc<AtomicBool>,
 }
 
 impl SessionHandle {
@@ -292,6 +345,10 @@ impl SessionHandle {
 
         // stdout reader
         let em = emitter.clone();
+        let read_guard = Arc::new(AtomicBool::new(true));
+        let guard_r = read_guard.clone();
+        let hook_tx = stdin_tx.clone();
+        let default_cwd = config.cwd.clone();
         let reader = runtime().spawn(async move {
             let mut lines = BufReader::new(stdout).lines();
             loop {
@@ -309,6 +366,23 @@ impl SessionHandle {
                                         i.claude_code_version.as_deref(),
                                         &i.tools,
                                     );
+                                }
+                                if let Incoming::ControlRequest(cr) = &inc
+                                    && let ControlRequestBody::HookCallback {
+                                        callback_id,
+                                        input,
+                                        ..
+                                    } = &cr.body
+                                {
+                                    let (rid, cid, inp) =
+                                        (cr.request_id.clone(), callback_id.clone(), input.clone());
+                                    let (cwd, on) =
+                                        (default_cwd.clone(), guard_r.load(Ordering::SeqCst));
+                                    let (tx, em2) = (hook_tx.clone(), em.clone());
+                                    tokio::task::spawn_blocking(move || {
+                                        answer_hook(rid, cid, inp, cwd, on, tx, em2)
+                                    });
+                                    continue;
                                 }
                                 em.emit(SessionEventKind::Incoming(Box::new(inc)));
                             }
@@ -403,9 +477,13 @@ impl SessionHandle {
             stdin_tx,
             kill_tx: Mutex::new(Some(kill_tx)),
             killed,
+            read_guard,
         };
-        // Ask for the slash command list (autocomplete). Failure is harmless.
-        if let Ok(request_id) = handle.send_control(json!({"subtype":"initialize"})) {
+        // Ask for the slash command list (autocomplete) and register the hooks.
+        // Failure is harmless.
+        if let Ok(request_id) =
+            handle.send_control(json!({"subtype":"initialize","hooks":hooks_config()}))
+        {
             handle
                 .emitter
                 .emit(SessionEventKind::InitializeRequested { request_id });
@@ -416,6 +494,16 @@ impl SessionHandle {
     /// Local key of this session.
     pub fn key(&self) -> SessionKey {
         self.key
+    }
+
+    /// Turns the read guard (blocks reading whole big files) on or off.
+    pub fn set_read_guard(&self, on: bool) {
+        self.read_guard.store(on, Ordering::SeqCst);
+    }
+
+    /// Whether the read guard is on (default: on).
+    pub fn read_guard_enabled(&self) -> bool {
+        self.read_guard.load(Ordering::SeqCst)
     }
 
     /// OS process id, if known.

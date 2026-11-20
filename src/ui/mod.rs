@@ -135,6 +135,8 @@ pub enum Action {
         key: SessionKey,
         request_id: String,
         decision: PermissionDecision,
+        /// Extra instructions, sent as a user message right after an allow.
+        note: Option<String>,
     },
     /// Approve an `ExitPlanMode` request (optionally with an edited plan in
     /// `updated_input`) and switch that session to `mode`.
@@ -143,6 +145,8 @@ pub enum Action {
         request_id: String,
         updated_input: serde_json::Value,
         mode: PermissionMode,
+        /// Extra instructions, sent as a user message after the mode change.
+        note: Option<String>,
     },
     SetModel(String),
     SetMode(String),
@@ -674,9 +678,15 @@ impl DeckApp {
                 key,
                 request_id,
                 decision,
+                note,
             } => {
                 if let Some(h) = self.handles.get(&key)
-                    && let Err(e) = h.respond_permission(&request_id, decision)
+                    && let Err(e) = h.respond_permission(&request_id, decision).and_then(|()| {
+                        match note.as_deref().map(str::trim) {
+                            Some(n) if !n.is_empty() => h.send_user_message(n),
+                            _ => Ok(()),
+                        }
+                    })
                 {
                     self.error = Some(e.to_string());
                 }
@@ -686,6 +696,7 @@ impl DeckApp {
                 request_id,
                 updated_input,
                 mode,
+                note,
             } => {
                 if let Some(h) = self.handles.get(&key) {
                     let decision = PermissionDecision::Allow {
@@ -696,6 +707,10 @@ impl DeckApp {
                     if let Err(e) = h
                         .respond_permission(&request_id, decision)
                         .and_then(|()| h.set_permission_mode(mode))
+                        .and_then(|()| match note.as_deref().map(str::trim) {
+                            Some(n) if !n.is_empty() => h.send_user_message(n),
+                            _ => Ok(()),
+                        })
                     {
                         self.error = Some(e.to_string());
                     }
