@@ -49,7 +49,7 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
                             ui.add_space(12.0);
                             if s.transcript.is_empty() {
                                 ui.add_space(20.0);
-                                ui.label(theme::muted("Escribe un mensaje abajo para empezar."));
+                                ui.label(theme::muted("Type a message below to get started."));
                             }
                             render_items(
                                 ui,
@@ -79,7 +79,7 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
                         ui.label(theme::muted("· solo lectura"));
                     });
                     ui.add_space(4.0);
-                    let btn = egui::Button::new(RichText::new("Reanudar conversación").color(BG))
+                    let btn = egui::Button::new(RichText::new("Resume conversation").color(BG))
                         .fill(ACCENT)
                         .stroke(egui::Stroke::NONE);
                     if ui.add(btn).clicked() {
@@ -121,10 +121,10 @@ fn welcome(ui: &mut Ui, actions: &mut Vec<Action>) {
         ui.add_space(10.0);
         ui.label(theme::title("Claude Deck"));
         ui.label(theme::muted(
-            "Selecciona una conversación del lateral o empieza una nueva.",
+            "Select a conversation from the sidebar or start a new one.",
         ));
         ui.add_space(12.0);
-        let btn = egui::Button::new(RichText::new("Nueva conversación").color(BG))
+        let btn = egui::Button::new(RichText::new("New conversation").color(BG))
             .fill(ACCENT)
             .stroke(egui::Stroke::NONE);
         if ui.add(btn).clicked() {
@@ -132,7 +132,7 @@ fn welcome(ui: &mut Ui, actions: &mut Vec<Action>) {
         }
         ui.add_space(6.0);
         ui.label(theme::muted(
-            "Ctrl+N nueva · Esc detiene · Ctrl+F busca en el historial",
+            "Ctrl+N new · Esc stops · Ctrl+F searches history",
         ));
     });
 }
@@ -146,7 +146,7 @@ fn working_line(ui: &mut Ui, s: &Session) {
         Item::UserText { at, .. } => Some(*at),
         _ => None,
     });
-    let mut text = "Claude está trabajando".to_owned();
+    let mut text = "Claude is working".to_owned();
     if let Some(at) = started {
         let secs = Local::now().signed_duration_since(at).num_seconds().max(0);
         text.push_str(&format!(" · {secs} s"));
@@ -227,7 +227,7 @@ fn tool_run(ui: &mut Ui, run: &[Item]) {
     if running {
         title.push_str(" · ejecutando");
     } else if failed {
-        title.push_str(" · con errores");
+        title.push_str(" · with errors");
     }
     CollapsingHeader::new(RichText::new(title).small().color(MUTED))
         .default_open(running)
@@ -299,7 +299,7 @@ fn tool_row(ui: &mut Ui, item: &Item) {
                         );
                     }
                     None => {
-                        ui.label(theme::muted("Ejecutando…"));
+                        ui.label(theme::muted("Running…"));
                     }
                 }
             });
@@ -376,7 +376,7 @@ fn turn_short(t: &TurnSummary) -> String {
         s.push_str(&format!(" · {}", fmt_cost(t.turn_cost_usd)));
     }
     if t.is_error {
-        s.push_str(" · con error");
+        s.push_str(" · with error");
     }
     s
 }
@@ -384,7 +384,7 @@ fn turn_short(t: &TurnSummary) -> String {
 /// Full turn detail (tooltip).
 fn turn_text(t: &TurnSummary) -> String {
     let mut s = format!(
-        "Duración {}\nEntrada {} · salida {}\nCaché leída {} · escrita {}",
+        "Duration {}\nInput {} · output {}\nCache read {} · written {}",
         fmt_duration_ms(t.duration_ms),
         fmt_tokens(t.input_tokens),
         fmt_tokens(t.output_tokens),
@@ -399,7 +399,7 @@ fn turn_text(t: &TurnSummary) -> String {
         ));
     }
     if t.is_error {
-        s.push_str("\nEl turno terminó con error");
+        s.push_str("\nThe turn ended with an error");
     }
     s
 }
@@ -430,7 +430,7 @@ fn todo_strip(ui: &mut Ui, s: &Session) {
                         let head = ui.horizontal(|ui| {
                             let chevron = if collapsed { "▸" } else { "▾" };
                             ui.label(RichText::new(chevron).color(MUTED));
-                            ui.label(theme::semibold("Tareas"));
+                            ui.label(theme::semibold("Tasks"));
                             ui.label(theme::muted(format!("{done}/{}", todos.len())));
                         });
                         if ui
@@ -488,30 +488,30 @@ pub fn tool_summary(name: &str, input: &serde_json::Value) -> String {
             .iter()
             .filter(|t| t.get("status").and_then(|s| s.as_str()) == Some("completed"))
             .count();
-        return format!("Lista de tareas actualizada ({done}/{})", arr.len());
+        return format!("Task list updated ({done}/{})", arr.len());
     }
     let text = |k: &str| input.get(k).and_then(|v| v.as_str());
     match name {
         "TaskCreate" => {
-            return format!("Nueva tarea: {}", trunc(text("subject").unwrap_or("?"), 70));
+            return format!("New task: {}", trunc(text("subject").unwrap_or("?"), 70));
         }
         "TaskUpdate" => {
             let label = match text("status") {
-                Some("in_progress") => "en curso",
-                Some("completed") => "completada",
-                Some("pending") => "pendiente",
-                Some("deleted") => "eliminada",
-                _ => "actualizada",
+                Some("in_progress") => "in progress",
+                Some("completed") => "completed",
+                Some("pending") => "pending",
+                Some("deleted") => "deleted",
+                _ => "updated",
             };
             let id = match input.get("taskId") {
                 Some(serde_json::Value::String(s)) => s.clone(),
                 Some(serde_json::Value::Number(n)) => n.to_string(),
                 _ => "?".into(),
             };
-            return format!("Tarea #{id} {label}");
+            return format!("Task #{id} {label}");
         }
-        "TaskList" => return "Lista de tareas".into(),
-        "TaskGet" => return format!("Tarea #{}", text("taskId").unwrap_or("?")),
+        "TaskList" => return "Task list".into(),
+        "TaskGet" => return format!("Task #{}", text("taskId").unwrap_or("?")),
         _ => {}
     }
     for k in [

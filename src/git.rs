@@ -104,7 +104,7 @@ fn run(dir: &Path, args: &[&str]) -> Result<String, String> {
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr).trim().to_owned();
         return Err(if err.is_empty() {
-            format!("git {} falló", args.first().copied().unwrap_or(""))
+            format!("git {} failed", args.first().copied().unwrap_or(""))
         } else {
             err
         });
@@ -130,7 +130,7 @@ pub fn repo_root(dir: &Path) -> Option<PathBuf> {
 
 /// Working tree (tracked + untracked) against HEAD, for the repo containing `cwd`.
 pub fn diff(cwd: &Path) -> Result<Vec<FileDiff>, String> {
-    let root = repo_root(cwd).ok_or_else(|| "La carpeta no es un repositorio git".to_owned())?;
+    let root = repo_root(cwd).ok_or_else(|| "The folder is not a git repository".to_owned())?;
     let base = if run(&root, &["rev-parse", "--verify", "--quiet", "HEAD"]).is_ok() {
         "HEAD"
     } else {
@@ -326,11 +326,11 @@ fn new_slug() -> String {
 /// Creates `<repo_root>/.claude/worktrees/<slug>` on a new branch `deck/<slug>`
 /// from HEAD.
 pub fn create_worktree(repo_root: &Path, slug: &str) -> Result<WorktreeInfo, String> {
-    let fail = |e: String| format!("No se pudo crear el worktree: {e}");
+    let fail = |e: String| format!("Could not create the worktree: {e}");
     // Always hang worktrees off the main repo, even when started from inside one.
     let repo_root = &main_repo_root(repo_root);
     let base = run(repo_root, &["rev-parse", "HEAD"])
-        .map_err(|_| fail("el repositorio no tiene ningún commit".into()))?
+        .map_err(|_| fail("the repository has no commits".into()))?
         .trim()
         .to_owned();
     ensure_excluded(repo_root).map_err(fail)?;

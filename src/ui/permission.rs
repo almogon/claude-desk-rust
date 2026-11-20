@@ -31,16 +31,16 @@ fn always_tooltip(rule: &Value) -> String {
         })
         .unwrap_or_default();
     let dest = match rule.get("destination").and_then(Value::as_str) {
-        Some("localSettings") => "Guarda la regla en .claude/settings.local.json de este proyecto.",
-        Some("projectSettings") => "Guarda la regla en .claude/settings.json de este proyecto.",
-        Some("userSettings") => "Guarda la regla en ~/.claude/settings.json (todos tus proyectos).",
-        Some("session") => "La regla solo vale durante esta sesión.",
-        _ => "Guarda la regla que propone Claude Code.",
+        Some("localSettings") => "Saves the rule to .claude/settings.local.json in this project.",
+        Some("projectSettings") => "Saves the rule to .claude/settings.json in this project.",
+        Some("userSettings") => "Saves the rule to ~/.claude/settings.json (all your projects).",
+        Some("session") => "The rule only applies during this session.",
+        _ => "Saves the rule Claude Code suggests.",
     };
     if rules.is_empty() {
         dest.to_owned()
     } else {
-        format!("Permite {}. {dest}", rules.join(", "))
+        format!("Allows {}. {dest}", rules.join(", "))
     }
 }
 
@@ -54,9 +54,9 @@ pub fn card(
 ) {
     if let Some(allowed) = p.resolved {
         let (txt, color) = if allowed {
-            (format!("Permitido: {}", p.tool_name), OK)
+            (format!("Allowed: {}", p.tool_name), OK)
         } else {
-            (format!("Denegado: {}", p.tool_name), RED)
+            (format!("Denied: {}", p.tool_name), RED)
         };
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
@@ -66,7 +66,7 @@ pub fn card(
         return;
     }
     let Some(key) = key else {
-        ui.label(theme::muted(format!("Permiso pendiente: {}", p.tool_name)));
+        ui.label(theme::muted(format!("Permission pending: {}", p.tool_name)));
         return;
     };
 
@@ -84,11 +84,11 @@ pub fn card(
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             let title = if is_plan {
-                "Plan propuesto".to_owned()
+                "Proposed plan".to_owned()
             } else if is_ask {
-                "Claude te pregunta".to_owned()
+                "Claude is asking you".to_owned()
             } else {
-                format!("Permiso solicitado · {}", p.tool_name)
+                format!("Permission requested · {}", p.tool_name)
             };
             ui.label(theme::semibold(title).color(AMBER));
             if let Some(d) = &p.description
@@ -126,7 +126,7 @@ pub fn card(
                             ui.label(RichText::new(s).monospace());
                         });
                 }
-                ui.collapsing("Ver entrada completa", |ui| {
+                ui.collapsing("Show full input", |ui| {
                     let pretty = serde_json::to_string_pretty(&p.input).unwrap_or_default();
                     ui.label(RichText::new(trunc(&pretty, 3000)).monospace().small());
                 });
@@ -144,8 +144,8 @@ pub fn card(
                     ui.horizontal_wrapped(|ui| {
                         let ready = ask_input.is_some();
                         if ui
-                            .add_enabled(ready, primary("Enviar respuestas"))
-                            .on_disabled_hover_text("Responde todas las preguntas.")
+                            .add_enabled(ready, primary("Send answers"))
+                            .on_disabled_hover_text("Answer all the questions.")
                             .clicked()
                             && let Some(updated_input) = ask_input.clone()
                         {
@@ -159,7 +159,7 @@ pub fn card(
                                 note: None,
                             });
                         }
-                        if ui.button("Denegar…").clicked() {
+                        if ui.button("Deny…").clicked() {
                             st.deny_open = true;
                         }
                     });
@@ -267,7 +267,7 @@ pub fn card(
                                 let r = ui.add(
                                     egui::TextEdit::singleline(&mut st.note)
                                         .id(note_id)
-                                        .hint_text("Instrucciones adicionales para Claude")
+                                        .hint_text("Additional instructions for Claude")
                                         .desired_width(f32::INFINITY),
                                 );
                                 if st.focus_note {
@@ -276,7 +276,7 @@ pub fn card(
                                 }
                             } else {
                                 let hint = egui::Label::new(
-                                    RichText::new("Tab para añadir instrucciones")
+                                    RichText::new("Tab to add instructions")
                                         .small()
                                         .color(MUTED),
                                 )
@@ -322,9 +322,9 @@ pub fn card(
 
                 if is_plan {
                     let edit_label = if plan_st.editing {
-                        "Descartar edición"
+                        "Discard edit"
                     } else {
-                        "Editar plan"
+                        "Edit plan"
                     };
                     if ui.button(edit_label).clicked() {
                         if plan_st.editing {
@@ -341,19 +341,19 @@ pub fn card(
                 let reason = reasons.entry(p.request_id.clone()).or_default();
                 ui.add(
                     egui::TextEdit::singleline(reason)
-                        .hint_text("Motivo para Claude (opcional)")
+                        .hint_text("Reason for Claude (optional)")
                         .desired_width(f32::INFINITY),
                 );
                 ui.horizontal(|ui| {
                     let confirm =
-                        egui::Button::new(RichText::new("Confirmar").color(BG)).fill(RED);
+                        egui::Button::new(RichText::new("Confirm").color(BG)).fill(RED);
                     if ui.add(confirm).clicked() {
                         let message = if reason.trim().is_empty() {
                             if is_plan {
-                                "El usuario quiere seguir planificando; no ejecutes el plan todavía."
+                                "The user wants to keep planning; do not execute the plan yet."
                                     .to_owned()
                             } else {
-                                "El usuario denegó el permiso.".to_owned()
+                                "The user denied permission.".to_owned()
                             }
                         } else {
                             reason.trim().to_owned()
@@ -365,7 +365,7 @@ pub fn card(
                             note: None,
                         });
                     }
-                    if ui.button("Cancelar").clicked() {
+                    if ui.button("Cancel").clicked() {
                         st.deny_open = false;
                     }
                 });
@@ -404,25 +404,25 @@ fn choice(label: &str, tooltip: Option<String>, kind: ChoiceKind) -> Choice {
 
 /// Options of a regular tool permission card.
 fn tool_choices(p: &PermissionItem) -> Vec<Choice> {
-    let mut out = vec![choice("Sí", None, ChoiceKind::Allow(Vec::new()))];
+    let mut out = vec![choice("Yes", None, ChoiceKind::Allow(Vec::new()))];
     if let Some(rule) = p.add_rules_suggestion() {
         out.push(choice(
-            "Sí, y no volver a preguntar",
+            "Yes, and don't ask again",
             Some(always_tooltip(rule)),
             ChoiceKind::Allow(vec![rule.clone()]),
         ));
     } else if let Some(mode) = p.accept_edits_suggestion() {
         out.push(choice(
-            "Sí, y aceptar ediciones en esta sesión",
+            "Yes, and accept edits this session",
             Some(
-                "Las ediciones siguientes no pedirán permiso hasta que termine la sesión."
+                "Following edits won't ask for permission until the session ends."
                     .to_owned(),
             ),
             ChoiceKind::Allow(vec![mode.clone()]),
         ));
     }
     out.push(choice(
-        "No, y decirle a Claude qué hacer distinto",
+        "No, and tell Claude what to do differently",
         None,
         ChoiceKind::Deny,
     ));
@@ -433,21 +433,21 @@ fn tool_choices(p: &PermissionItem) -> Vec<Choice> {
 fn plan_choices() -> Vec<Choice> {
     vec![
         choice(
-            "Sí, y modo auto",
+            "Yes, and auto mode",
             None,
             ChoiceKind::Plan(PermissionMode::Auto),
         ),
         choice(
-            "Sí, y aceptar ediciones",
+            "Yes, and accept edits",
             None,
             ChoiceKind::Plan(PermissionMode::AcceptEdits),
         ),
         choice(
-            "Sí, y preguntar en cada edición",
+            "Yes, and ask for each edit",
             None,
             ChoiceKind::Plan(PermissionMode::Default),
         ),
-        choice("No, seguir planificando", None, ChoiceKind::Deny),
+        choice("No, keep planning", None, ChoiceKind::Deny),
     ]
 }
 
@@ -600,14 +600,14 @@ fn ask_form(ui: &mut Ui, request_id: &str, input: &Value) -> Option<Value> {
         }
         ui.horizontal(|ui| {
             if multi {
-                ui.checkbox(&mut a.other_on, "Otra");
-            } else if ui.radio(a.other_on, "Otra").clicked() {
+                ui.checkbox(&mut a.other_on, "Other");
+            } else if ui.radio(a.other_on, "Other").clicked() {
                 a.selected.iter_mut().for_each(|s| *s = false);
                 a.other_on = true;
             }
             let r = ui.add(
                 egui::TextEdit::singleline(&mut a.other_text)
-                    .hint_text("Escribe tu respuesta")
+                    .hint_text("Type your answer")
                     .desired_width(f32::INFINITY),
             );
             if r.changed() && !a.other_text.is_empty() {
@@ -720,8 +720,8 @@ mod tests {
         let rule = json!({"type":"addRules","rules":[{"toolName":"Bash"}],"destination":"session"});
         let cs = tool_choices(&item(vec![rule.clone()]));
         assert_eq!(cs.len(), 3);
-        assert_eq!(cs[0].label, "Sí");
-        assert_eq!(cs[1].label, "Sí, y no volver a preguntar");
+        assert_eq!(cs[0].label, "Yes");
+        assert_eq!(cs[1].label, "Yes, and don't ask again");
         assert!(cs[1].tooltip.is_some());
         assert_eq!(*kinds(&cs)[1], ChoiceKind::Allow(vec![rule]));
         assert_eq!(cs[2].kind, ChoiceKind::Deny);
@@ -732,7 +732,7 @@ mod tests {
         let m = json!({"type":"setMode","mode":"acceptEdits"});
         let cs = tool_choices(&item(vec![m.clone()]));
         assert_eq!(cs.len(), 3);
-        assert_eq!(cs[1].label, "Sí, y aceptar ediciones en esta sesión");
+        assert_eq!(cs[1].label, "Yes, and accept edits this session");
         assert_eq!(cs[1].kind, ChoiceKind::Allow(vec![m]));
     }
 

@@ -28,16 +28,9 @@ pub fn show_bottom(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
         None => "Usage".to_owned(),
     };
     let sub_label = if active_running > 0 {
-        format!(
-            "Subagentes · {active_running} {}",
-            if active_running == 1 {
-                "activo"
-            } else {
-                "activos"
-            }
-        )
+        format!("Subagents · {active_running} active")
     } else {
-        "Subagentes".to_owned()
+        "Subagents".to_owned()
     };
     panel.frame(frame).show(ui, |ui| {
         ui.horizontal(|ui| {
@@ -48,10 +41,10 @@ pub fn show_bottom(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
             );
             ui.selectable_value(&mut app.settings.bottom_tab, BottomTab::Usage, usage_label);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let text = if collapsed { "Desplegar" } else { "Plegar" };
+                let text = if collapsed { "Expand" } else { "Collapse" };
                 if ui
                     .small_button(RichText::new(text).color(MUTED))
-                    .on_hover_text("Plegar o desplegar el panel inferior")
+                    .on_hover_text("Collapse or expand the bottom panel")
                     .clicked()
                 {
                     app.settings.bottom_collapsed = !collapsed;
@@ -83,20 +76,20 @@ fn reset_text(dt: DateTime<Local>) -> String {
     let now = Local::now();
     let rem = dt.signed_duration_since(now);
     let when = if dt.date_naive() == now.date_naive() {
-        format!("a las {}", dt.format("%H:%M"))
+        format!("at {}", dt.format("%H:%M"))
     } else {
-        format!("el {} a las {}", dt.format("%d/%m"), dt.format("%H:%M"))
+        format!("on {} at {}", dt.format("%d/%m"), dt.format("%H:%M"))
     };
     if rem.num_minutes() <= 0 {
-        format!("se reinicia {when}")
+        format!("resets {when}")
     } else if rem.num_hours() < 48 {
         format!(
-            "se reinicia en {} h {} min ({when})",
+            "resets in {} h {} min ({when})",
             rem.num_hours(),
             rem.num_minutes() % 60
         )
     } else {
-        format!("se reinicia en {} días ({when})", rem.num_days())
+        format!("resets in {} days ({when})", rem.num_days())
     }
 }
 
@@ -104,7 +97,7 @@ fn bar(ui: &mut Ui, label: &str, w: Option<&RateWindowState>) {
     ui.label(theme::semibold(label));
     match w {
         None => {
-            ui.label(theme::muted("sin datos"));
+            ui.label(theme::muted("no data"));
         }
         Some(w) => {
             let u = w.utilization.clamp(0.0, 1.0);
@@ -130,18 +123,18 @@ fn usage_tab(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
                 let rl = app.state.rate_limits();
                 if rl.five_hour.is_none() && rl.seven_day.is_none() {
                     ui.label(theme::muted(
-                        "Aún no hay datos de límites: aparecen tras la primera respuesta de Claude \
-                         (o pulsa «Actualizar /usage»).",
+                        "No rate limit data yet: it appears after Claude's first response \
+                         (or press «Refresh /usage»).",
                     ));
                 } else {
-                    bar(ui, "Sesión de 5 h", rl.five_hour.as_ref());
+                    bar(ui, "5-hour session", rl.five_hour.as_ref());
                     ui.add_space(6.0);
-                    bar(ui, "Semana (7 días)", rl.seven_day.as_ref());
+                    bar(ui, "Week (7 days)", rl.seven_day.as_ref());
                 }
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     if ui
-                        .add_enabled(!app.usage_busy, egui::Button::new("Actualizar /usage"))
+                        .add_enabled(!app.usage_busy, egui::Button::new("Refresh /usage"))
                         .clicked()
                     {
                         actions.push(Action::RefreshUsage);
@@ -155,7 +148,7 @@ fn usage_tab(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
                 }
                 if let Some(t) = app.state.usage_text() {
                     egui::CollapsingHeader::new(
-                        RichText::new(format!("Salida de /usage · {}", t.at.format("%H:%M:%S")))
+                        RichText::new(format!("/usage output · {}", t.at.format("%H:%M:%S")))
                             .small()
                             .color(MUTED),
                     )
@@ -171,15 +164,15 @@ fn usage_tab(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
                     .spacing([18.0, 4.0])
                     .show(ui, |ui| {
                         ui.label("");
-                        ui.label(theme::semibold("Conversación"));
-                        ui.label(theme::semibold("Hoy"));
+                        ui.label(theme::semibold("Conversation"));
+                        ui.label(theme::semibold("Today"));
                         ui.end_row();
                         let conv = app
                             .active_key()
                             .and_then(|k| app.state.session(k))
                             .map(|s| s.usage);
                         let day = app.state.day_usage();
-                        let labels = ["Entrada", "Salida", "Caché leída", "Coste", "Turnos"];
+                        let labels = ["Input", "Output", "Cache read", "Cost", "Turns"];
                         let cell = |sel: usize, t: Option<(TokenTotals, f64, u32)>| -> String {
                             match t {
                                 None => "—".to_owned(),
@@ -201,7 +194,7 @@ fn usage_tab(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
                             ui.end_row();
                         }
                     });
-                ui.label(theme::muted("«Hoy» cuenta solo esta ejecución de la app."));
+                ui.label(theme::muted("«Today» counts only this app run."));
             });
         });
 }

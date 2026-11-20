@@ -236,7 +236,7 @@ fn permission_noflag_records_denial_note() {
     let (st, key) = replay("permission_noflag", |_| None, noop);
     let s = st.session(key).unwrap();
     assert!(s.transcript.iter().any(|i| matches!(i,
-        Item::Note { kind: NoteKind::System, text, .. } if text.contains("Permiso denegado"))));
+        Item::Note { kind: NoteKind::System, text, .. } if text.contains("Permission denied"))));
 }
 
 #[test]

@@ -733,9 +733,9 @@ impl Session {
                 tool_name, message, ..
             } => {
                 let text = if message.is_empty() {
-                    format!("Permiso denegado para {tool_name}.")
+                    format!("Permission denied for {tool_name}.")
                 } else {
-                    format!("Permiso denegado para {tool_name}: {message}")
+                    format!("Permission denied for {tool_name}: {message}")
                 };
                 self.note(NoteKind::System, text, now);
             }
@@ -799,10 +799,10 @@ impl Session {
                     let err = cr
                         .error
                         .clone()
-                        .unwrap_or_else(|| "error desconocido".into());
+                        .unwrap_or_else(|| "unknown error".into());
                     self.note(
                         NoteKind::Error,
-                        format!("Claude Code rechazó una petición de control: {err}"),
+                        format!("Claude Code rejected a control request: {err}"),
                         now,
                     );
                 }
@@ -1363,7 +1363,7 @@ impl AppState {
                     s.note(NoteKind::Info, format!("Lectura bloqueada: {r}{ell}"), now);
                 }
                 SessionEventKind::InterruptRequested => {
-                    s.note(NoteKind::Info, "Interrumpido por el usuario.".into(), now)
+                    s.note(NoteKind::Info, "Interrupted by the user.".into(), now)
                 }
                 SessionEventKind::Incoming(inc) => {
                     if let Incoming::Result(r) = inc.as_ref() {

@@ -117,7 +117,7 @@ impl Attachment {
     pub fn label(&self) -> String {
         match self {
             Attachment::Image { w, h, .. } => format!("Imagen {w}×{h}"),
-            Attachment::PastedText { lines, .. } => format!("Texto pegado · {lines} líneas"),
+            Attachment::PastedText { lines, .. } => format!("Pasted text · {lines} lines"),
         }
     }
 

@@ -196,7 +196,7 @@ fn chips_row(ui: &mut Ui, atts: &[Attachment]) -> Option<usize> {
                         ui.label(RichText::new(a.label()).small().color(MUTED));
                         if ui
                             .small_button("×")
-                            .on_hover_text("Quitar adjunto")
+                            .on_hover_text("Remove attachment")
                             .clicked()
                         {
                             remove = Some(i);
@@ -286,15 +286,15 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, key: SessionKey, actions: &mut Vec<A
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
-                                ui.label(theme::muted("La conversación ha terminado."));
+                                ui.label(theme::muted("The conversation has ended."));
                                 let btn = egui::Button::new(
-                                    RichText::new("Reanudar conversación").color(BG),
+                                    RichText::new("Resume conversation").color(BG),
                                 )
                                 .fill(ACCENT)
                                 .stroke(Stroke::NONE);
                                 if ui
                                     .add_enabled(has_id, btn)
-                                    .on_disabled_hover_text("Aún no tiene identificador de sesión")
+                                    .on_disabled_hover_text("No session ID yet")
                                     .clicked()
                                 {
                                     actions.push(Action::ResumeSession(key));
@@ -454,14 +454,14 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, key: SessionKey, actions: &mut Vec<A
                                             .frame(Frame::NONE)
                                             .desired_rows(2)
                                             .desired_width(ui.available_width())
-                                            .hint_text("Mensaje para Claude"),
+                                            .hint_text("Message to Claude"),
                                     );
                                 });
                             let has_content =
                                 !draft.text.trim().is_empty() || !draft.attachments.is_empty();
                             let stop = status == SessionStatus::Running && !has_content;
                             if stop {
-                                let b = egui::Button::new(RichText::new("Detener").color(RED))
+                                let b = egui::Button::new(RichText::new("Stop").color(RED))
                                     .stroke(Stroke::new(1.0, RED));
                                 if ui
                                     .add_sized([btn_w, 28.0], b)
@@ -471,7 +471,7 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, key: SessionKey, actions: &mut Vec<A
                                     actions.push(Action::Interrupt(key));
                                 }
                             } else {
-                                let b = egui::Button::new(RichText::new("Enviar").color(BG))
+                                let b = egui::Button::new(RichText::new("Send").color(BG))
                                     .fill(ACCENT)
                                     .stroke(Stroke::NONE);
                                 if ui
@@ -479,7 +479,7 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, key: SessionKey, actions: &mut Vec<A
                                         ui.add_sized([btn_w, 28.0], b)
                                     })
                                     .inner
-                                    .on_hover_text("Enter envía · Shift+Enter nueva línea")
+                                    .on_hover_text("Enter sends · Shift+Enter new line")
                                     .clicked()
                                 {
                                     send = true;

@@ -10,11 +10,11 @@ use super::{
 /// Short label of a permission mode for its chip.
 fn mode_short(mode: &str) -> &'static str {
     match mode {
-        "default" => "Preguntar",
-        "acceptEdits" => "Aceptar ediciones",
+        "default" => "Ask",
+        "acceptEdits" => "Accept edits",
         "plan" => "Plan",
-        "bypassPermissions" => "Sin permisos",
-        _ => "Modo",
+        "bypassPermissions" => "Bypass permissions",
+        _ => "Mode",
     }
 }
 
@@ -48,7 +48,7 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
     let conv_title: Option<String> = match &app.selected {
         Some(Selected::Session(k)) => app.state.session(*k).map(|s| {
             if s.title.is_empty() {
-                "Nueva conversación".to_owned()
+                "New conversation".to_owned()
             } else {
                 s.title.clone()
             }
@@ -56,7 +56,7 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
         Some(Selected::History(h)) => Some(h.loaded.title.clone()),
         None => None,
     };
-    let next_conv = "Se aplicará a la próxima conversación.";
+    let next_conv = "Applies to the next conversation.";
 
     egui::Panel::top("header")
         .frame(
@@ -77,8 +77,8 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
                     // Diff panel toggle (rightmost)
                     let open = app.settings.diff_open;
                     if ui
-                        .add(egui::Button::new("Cambios").selected(open))
-                        .on_hover_text("Mostrar u ocultar los cambios del repositorio")
+                        .add(egui::Button::new("Changes").selected(open))
+                        .on_hover_text("Show or hide repository changes")
                         .clicked()
                     {
                         actions.push(Action::ToggleDiff);
@@ -101,10 +101,10 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
                         ui.separator();
                         let (label, tip) = match target {
                             FolderTarget::NewConversation => (
-                                "Nueva conversación en otra carpeta…",
-                                "La carpeta de una conversación ya empezada no se puede cambiar.",
+                                "New conversation in another folder…",
+                                "The folder of a conversation already started cannot be changed.",
                             ),
-                            _ => ("Cambiar carpeta…", "Carpeta en la que trabaja Claude."),
+                            _ => ("Change folder…", "Folder Claude works in."),
                         };
                         if ui.button(label).on_hover_text(tip).clicked() {
                             actions.push(Action::PickFolder(target));
@@ -134,7 +134,7 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
                         "bypassPermissions" => RED,
                         _ => TEXT,
                     };
-                    let mut mode_tip = "Modo de permisos".to_owned();
+                    let mut mode_tip = "Permission mode".to_owned();
                     if live.is_none() {
                         mode_tip = format!("{mode_tip}. {next_conv}");
                     }
@@ -155,8 +155,8 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
                     // Model
                     let mut model = app.settings.model.clone();
                     let mut model_tip = match real_model.as_deref() {
-                        Some(r) => format!("Modelo: {r}"),
-                        None => "Modelo".to_owned(),
+                        Some(r) => format!("Model: {r}"),
+                        None => "Model".to_owned(),
                     };
                     if live.is_none() {
                         model_tip = format!("{model_tip}. {next_conv}");
@@ -187,7 +187,7 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
                         let mut on = h.read_guard_enabled();
                         if ui
                             .checkbox(&mut on, "Grep")
-                            .on_hover_text("Bloquea leer enteros archivos de más de 300 líneas")
+                            .on_hover_text("Blocks reading whole files longer than 300 lines")
                             .changed()
                         {
                             h.set_read_guard(on);
@@ -218,7 +218,7 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(e).color(RED));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.button(RichText::new("Cerrar").color(MUTED)).clicked() {
+                        if ui.button(RichText::new("Close").color(MUTED)).clicked() {
                             app.error = None;
                         }
                     });

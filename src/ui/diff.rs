@@ -36,17 +36,17 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
                 _ => None,
             };
             ui.horizontal(|ui| {
-                ui.label(theme::semibold("Cambios"));
+                ui.label(theme::semibold("Changes"));
                 if let Some(n) = count {
                     ui.label(theme::muted(format!(
                         "· {n} {}",
-                        if n == 1 { "archivo" } else { "archivos" }
+                        if n == 1 { "file" } else { "files" }
                     )));
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if busy {
                         ui.add(egui::Spinner::new().size(12.0));
-                    } else if ui.small_button("Actualizar").clicked() {
+                    } else if ui.small_button("Refresh").clicked() {
                         actions.push(Action::RefreshDiff);
                     }
                 });
@@ -55,19 +55,19 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
 
             let Some(view) = app.diff.as_ref() else {
                 if !busy {
-                    ui.label(theme::muted("Sin datos todavía"));
+                    ui.label(theme::muted("No data yet"));
                 }
                 return;
             };
             match &view.outcome {
                 DiffOutcome::NotRepo => {
-                    ui.label(theme::muted("La carpeta no es un repositorio git"));
+                    ui.label(theme::muted("The folder is not a git repository"));
                 }
                 DiffOutcome::Error(e) => {
                     ui.label(RichText::new(e).color(RED));
                 }
                 DiffOutcome::Files(files) if files.is_empty() => {
-                    ui.label(theme::muted("Sin cambios"));
+                    ui.label(theme::muted("No changes"));
                 }
                 DiffOutcome::Files(files) => {
                     let sel = app
@@ -169,7 +169,7 @@ enum Row<'a> {
 
 fn file_body(ui: &mut Ui, f: &FileDiff) {
     if f.binary {
-        ui.label(theme::muted("Archivo binario o demasiado grande"));
+        ui.label(theme::muted("Binary or too large file"));
         return;
     }
     let rows: Vec<Row> = f
@@ -181,12 +181,12 @@ fn file_body(ui: &mut Ui, f: &FileDiff) {
         })
         .collect();
     if rows.is_empty() {
-        ui.label(theme::muted("Sin cambios de contenido"));
+        ui.label(theme::muted("No content changes"));
         return;
     }
     if f.truncated {
         ui.label(theme::muted(format!(
-            "Diff recortado a {} líneas",
+            "Diff truncated to {} lines",
             crate::git::MAX_LINES_PER_FILE
         )));
     }

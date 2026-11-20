@@ -13,7 +13,7 @@ Personal desktop client for Claude Code (Rust, egui/eframe 0.37) that wraps the 
 
 ## Conventions
 
-- Code, comments and docs in English; every user-visible string in Spanish.
+- Code, comments and docs in English; every user-visible string in English.
 - Always pass `--permission-mode` explicitly (the user's default is `plan`). Show the model from `assistant.message.model`, not from `system/init`.
 - cargo may not be on PATH in agent shells: use `%USERPROFILE%\.cargo\bin\cargo.exe`. The local git is old (no `git switch`).
 - Before committing: `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test`.
