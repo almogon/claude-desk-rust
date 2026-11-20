@@ -24,7 +24,7 @@ pub fn show_bottom(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
     };
     let active_running = subagents::running_count(app);
     let usage_label = match app.state.rate_limits().five_hour.as_ref() {
-        Some(w) => format!("Usage · 5 h {:.0} %", w.utilization.clamp(0.0, 1.0) * 100.0),
+        Some(w) => format!("Usage · {:.0} %", w.utilization.clamp(0.0, 1.0) * 100.0),
         None => "Usage".to_owned(),
     };
     let sub_label = if active_running > 0 {

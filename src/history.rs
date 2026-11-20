@@ -105,6 +105,17 @@ pub fn scan_history(projects_dir: &Path, limit: usize) -> Vec<HistoryEntry> {
         .collect()
 }
 
+/// Permanently deletes a session file and, if present, the CLI's sidecar
+/// folder next to it (`<session_id>/`: subagents, tool results).
+pub fn delete_session(path: &Path) -> std::io::Result<()> {
+    std::fs::remove_file(path)?;
+    let sidecar = path.with_extension("");
+    if sidecar.is_dir() {
+        std::fs::remove_dir_all(&sidecar)?;
+    }
+    Ok(())
+}
+
 fn scan_file(path: &Path, mtime: SystemTime) -> Option<HistoryEntry> {
     let session_id = path.file_stem()?.to_str()?.to_owned();
     let file = File::open(path).ok()?;

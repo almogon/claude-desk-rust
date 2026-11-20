@@ -10,15 +10,20 @@ const ROW_H: f32 = 16.0;
 /// Characters drawn per diff line (keeps text layout cheap).
 const MAX_CHARS: usize = 400;
 
+/// Narrowest width of the panel.
+pub const MIN_WIDTH: f32 = 320.0;
+const MAX_WIDTH: f32 = 1000.0;
+
 pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
     if !app.settings.diff_open {
         return;
     }
     let busy = app.diff_busy;
+    let max_w = (ui.available_width() - super::MIN_CHAT_WIDTH).clamp(MIN_WIDTH, MAX_WIDTH);
     egui::Panel::right("diff_panel")
         .resizable(true)
         .default_size(460.0)
-        .size_range(320.0..=1000.0)
+        .size_range(MIN_WIDTH..=max_w)
         .frame(
             Frame::new()
                 .fill(SURFACE)

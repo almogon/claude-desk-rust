@@ -1,9 +1,11 @@
-//! Top bar: brand, active conversation + state chip, model / mode / folder chips.
+//! Top bar: brand, active conversation title, model / mode / folder chips.
 
 use egui::{Align, Color32, CornerRadius, Frame, Layout, Margin, RichText, Ui, vec2};
 
 use super::theme::{self, ACCENT, AMBER, LINE, MUTED, OK, R_CHIP, RED, SURFACE, TEXT};
-use super::{Action, DeckApp, FolderTarget, MODELS, MODES, Selected, dot, short_dir, trunc};
+use super::{
+    Action, DeckApp, FolderTarget, MODELS, MODES, Selected, model_label, short_dir, trunc,
+};
 
 /// Short label of a permission mode for its chip.
 fn mode_short(mode: &str) -> &'static str {
@@ -33,14 +35,13 @@ fn chip(ui: &mut Ui, label: &str, color: Color32, menu: impl FnOnce(&mut Ui)) ->
 pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
     let active = app.active_key();
     let live = active.filter(|k| app.is_alive(*k));
-    let (real_model, live_mode, folder, status, worktree) = {
+    let (real_model, live_mode, folder, worktree) = {
         let s = active.and_then(|k| app.state.session(k));
         (
             s.and_then(|s| s.model.clone()),
             live.and_then(|k| app.state.session(k))
                 .and_then(|s| s.mode.clone()),
             s.map(|s| s.cwd.clone()),
-            s.map(|s| s.status.clone()),
             s.and_then(|s| s.worktree.clone()),
         )
     };
@@ -160,9 +161,16 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
                     if live.is_none() {
                         model_tip = format!("{model_tip}. {next_conv}");
                     }
-                    chip(ui, &model.clone(), TEXT, |ui| {
+                    let seen: Vec<String> = app
+                        .state
+                        .sessions()
+                        .iter()
+                        .filter_map(|s| s.model.clone())
+                        .collect();
+                    let label = |m: &str| model_label(m, seen.iter().map(String::as_str));
+                    chip(ui, &label(&model), TEXT, |ui| {
                         for m in MODELS {
-                            if ui.selectable_label(model == m, m).clicked() {
+                            if ui.selectable_label(model == m, label(m)).clicked() {
                                 model = m.to_owned();
                                 ui.close();
                             }
@@ -186,31 +194,14 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
                         }
                     }
 
-                    // Center: conversation title + state chip
+                    // Center: conversation title
                     ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                         let Some(t) = conv_title else { return };
                         let t = trunc(&t, 56);
                         let font = egui::FontId::new(15.0, theme::semibold_family());
                         let tw = ui.painter().layout_no_wrap(t.clone(), font, TEXT).size().x;
-                        let chip_w = if status.is_some() { 150.0 } else { 0.0 };
-                        ui.add_space(((ui.available_width() - tw - chip_w) / 2.0).max(8.0));
+                        ui.add_space(((ui.available_width() - tw) / 2.0).max(8.0));
                         ui.label(theme::semibold(t).size(15.0));
-                        if let Some(st) = &status {
-                            let c = theme::status_color(st);
-                            Frame::new()
-                                .fill(theme::tint(c, 38))
-                                .corner_radius(R_CHIP)
-                                .inner_margin(Margin::symmetric(9, 2))
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 4.0;
-                                        dot(ui, c, 4.0);
-                                        ui.label(
-                                            RichText::new(theme::status_label(st)).small().color(c),
-                                        );
-                                    });
-                                });
-                        }
                     });
                 });
             });

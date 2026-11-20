@@ -110,7 +110,7 @@ Interrupt mid-stream: response `success`, then a `user` event "[Request interrup
 The tool_use name is `Agent` (the init `tools` list calls it `Task`; handle both). Main assistant event:
 `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_01Hn...","name":"Agent","input":{"description":"Leer clave de nota.txt","subagent_type":"general-purpose","prompt":"...","run_in_background":false}}]},"parent_tool_use_id":null}`
 Lifecycle:
-1. `system/task_started`: `task_id` (= `agent_id`), `run_id`, `tool_use_id` (= the Agent tool_use id), `description`, `subagent_type`, `is_backgrounded`, `spawn_depth`, `task_type:"local_agent"`, `prompt`.
+1. `system/task_started`: `task_id` (= `agent_id`), `run_id`, `tool_use_id` (= the Agent tool_use id), `description`, `subagent_type`, `is_backgrounded`, `spawn_depth`, `task_type:"local_agent"`, `prompt`. The app uses `is_backgrounded` to mark a subagent as background; with `run_in_background:true` the Agent `tool_result` arrives immediately and does NOT mark the end, which is signalled by `task_updated`/`task_notification`.
 2. Subagent messages are `user` and `assistant` events (complete messages; NO stream_event partials were seen for the subagent) with `parent_tool_use_id` = the Agent tool_use id, plus `agent_id`, `subagent_type`, `task_description`. First one is the `user` event with the prompt.
 3. `system/task_progress`: `task_id`, `tool_use_id`, `description` (e.g. "Reading nota.txt"), `last_tool_name`, `usage` {total_tokens, tool_uses, duration_ms}.
 4. `system/task_updated`: `{"patch":{"status":"completed","end_time":<ms>}}`.
