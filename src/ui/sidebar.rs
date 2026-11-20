@@ -37,7 +37,7 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
                 .inner_margin(Margin::same(10)),
         )
         .show(ui, |ui| {
-            let primary = egui::Button::new(RichText::new("Nueva conversación").color(BG))
+            let primary = egui::Button::new(RichText::new("New conversation").color(BG))
                 .fill(ACCENT)
                 .stroke(egui::Stroke::NONE);
             if ui
@@ -48,15 +48,15 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
                 actions.push(Action::NewConversation);
             }
             let is_repo = app.folder_is_repo();
-            let tip = "Crea un git worktree y una rama deck/… para esta conversación";
+            let tip = "Creates a git worktree and a deck/… branch for this conversation";
             let r = ui.add_enabled(
                 is_repo,
-                egui::Checkbox::new(&mut app.settings.use_worktree, "Aislar en worktree"),
+                egui::Checkbox::new(&mut app.settings.use_worktree, "Isolate in worktree"),
             );
             if is_repo {
                 r.on_hover_text(tip);
             } else {
-                r.on_disabled_hover_text(format!("{tip}. La carpeta no es un repositorio git."));
+                r.on_disabled_hover_text(format!("{tip}. The folder is not a git repository."));
             }
             ui.add_space(8.0);
 
@@ -64,7 +64,7 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
             let total = app.state.sessions().len();
             if total == 0 {
                 ui.label(theme::muted(
-                    "Aún no hay conversaciones abiertas. Empieza una nueva o retoma una del historial.",
+                    "No conversations open yet. Start a new one or resume one from history.",
                 ));
             } else {
                 let max_h = ui.available_height() * 0.45;
@@ -74,9 +74,9 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
                         let g = app.state.grouped();
-                        group(ui, "Corriendo", &g.running, active, actions);
-                        group(ui, "Pendientes", &g.pending, active, actions);
-                        group(ui, "Terminadas", &g.finished, active, actions);
+                        group(ui, "Running", &g.running, active, actions);
+                        group(ui, "Pending", &g.pending, active, actions);
+                        group(ui, "Finished", &g.finished, active, actions);
                     });
             }
             ui.add_space(6.0);
@@ -105,13 +105,13 @@ fn group(
 fn session_menu(ui: &mut Ui, s: &Session, actions: &mut Vec<Action>) {
     let alive = !matches!(s.status, SessionStatus::Finished { .. });
     if ui
-        .add_enabled(alive, egui::Button::new("Detener"))
+        .add_enabled(alive, egui::Button::new("Stop"))
         .clicked()
     {
         actions.push(Action::Close(s.key));
         ui.close();
     }
-    if ui.button("Quitar de la lista").clicked() {
+    if ui.button("Remove from list").clicked() {
         actions.push(Action::Delete(s.key));
         ui.close();
     }
@@ -148,7 +148,7 @@ fn row(ui: &mut Ui, s: &Session, selected: bool, actions: &mut Vec<Action>) {
         }
     }
     let title = if s.title.is_empty() {
-        "Nueva conversación".to_owned()
+        "New conversation".to_owned()
     } else {
         trunc(&s.title, 40)
     };
@@ -195,19 +195,19 @@ pub fn confirm_delete(ctx: &egui::Context, app: &mut DeckApp, actions: &mut Vec<
     let mut cancel = false;
     let modal = egui::Modal::new(Id::NULL.with("confirm_delete_history")).show(ctx, |ui| {
         ui.set_max_width(380.0);
-        ui.label(theme::semibold("¿Borrar esta conversación?"));
+        ui.label(theme::semibold("Delete this conversation?"));
         ui.add_space(4.0);
         ui.label(trunc(&entry.title, 80));
         ui.label(theme::muted(
-            "Se eliminará del disco de forma permanente y no se podrá recuperar.",
+            "It will be permanently deleted from disk and cannot be recovered.",
         ));
         ui.add_space(8.0);
         ui.horizontal(|ui| {
-            let del = egui::Button::new(RichText::new("Borrar").color(BG)).fill(RED);
+            let del = egui::Button::new(RichText::new("Delete").color(BG)).fill(RED);
             if ui.add(del).clicked() {
                 actions.push(Action::DeleteHistory(Box::new(entry.clone())));
             }
-            if ui.button("Cancelar").clicked() {
+            if ui.button("Cancel").clicked() {
                 cancel = true;
             }
         });
@@ -223,13 +223,13 @@ fn bucket(dt: DateTime<Local>) -> &'static str {
     let d = dt.date_naive();
     let days = (today - d).num_days();
     if days <= 0 {
-        "Hoy"
+        "Today"
     } else if days == 1 {
-        "Ayer"
+        "Yesterday"
     } else if days < 7 {
-        "Esta semana"
+        "This week"
     } else {
-        "Anteriores"
+        "Earlier"
     }
 }
 
@@ -276,12 +276,12 @@ fn history_row(ui: &mut Ui, e: &HistoryEntry, selected: bool) -> egui::Response 
 
 fn history(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
     ui.horizontal(|ui| {
-        ui.label(theme::semibold("Historial"));
+        ui.label(theme::semibold("History"));
         if app.history_busy {
             ui.add(egui::Spinner::new().size(12.0));
         } else if ui
-            .small_button("Actualizar")
-            .on_hover_text("Volver a leer ~/.claude/projects")
+            .small_button("Refresh")
+            .on_hover_text("Re-read ~/.claude/projects")
             .clicked()
         {
             actions.push(Action::RefreshHistory);
@@ -290,7 +290,7 @@ fn history(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
     ui.add(
         egui::TextEdit::singleline(&mut app.history_filter)
             .id(filter_id())
-            .hint_text("Buscar (Ctrl+F)")
+            .hint_text("Search (Ctrl+F)")
             .desired_width(f32::INFINITY),
     );
 
@@ -313,13 +313,13 @@ fn history(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
     }
     let selected_text = match &app.history_folder {
         Some(f) => short_dir(f),
-        None => "Todas las carpetas".to_owned(),
+        None => "All folders".to_owned(),
     };
     egui::ComboBox::from_id_salt("history_folder")
         .selected_text(trunc(&selected_text, 30))
         .width(ui.available_width() - 8.0)
         .show_ui(ui, |ui| {
-            ui.selectable_value(&mut app.history_folder, None, "Todas las carpetas");
+            ui.selectable_value(&mut app.history_folder, None, "All folders");
             for f in &folders {
                 ui.selectable_value(&mut app.history_folder, Some(f.clone()), short_dir(f))
                     .on_hover_text(f.clone());
@@ -327,7 +327,7 @@ fn history(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
         });
     ui.checkbox(
         &mut app.settings.show_test_sessions,
-        "Mostrar sesiones de prueba",
+        "Show test sessions",
     );
     ui.add_space(4.0);
 
@@ -360,7 +360,7 @@ fn history(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
         .auto_shrink([false, false])
         .show(ui, |ui| {
             if visible.is_empty() {
-                ui.label(theme::muted("Sin resultados"));
+                ui.label(theme::muted("No results"));
             }
             let mut last = "";
             for e in visible {
@@ -376,11 +376,11 @@ fn history(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
                     actions.push(Action::OpenHistory(Box::new(e.clone())));
                 }
                 resp.context_menu(|ui| {
-                    if ui.button("Abrir").clicked() {
+                    if ui.button("Open").clicked() {
                         actions.push(Action::OpenHistory(Box::new(e.clone())));
                         ui.close();
                     }
-                    let del = RichText::new("Borrar conversación…").color(RED);
+                    let del = RichText::new("Delete conversation…").color(RED);
                     if ui.button(del).clicked() {
                         actions.push(Action::AskDeleteHistory(Box::new(e.clone())));
                         ui.close();

@@ -122,7 +122,7 @@ fn check_path(given: &str, cwd: &Path, max_lines: usize) -> Option<String> {
     let lines = count_lines(&path)?;
     if lines > max_lines {
         Some(format!(
-            "Bloqueado por claude-deck: {given} tiene {lines} líneas (máx. {max_lines} para leerlo entero). Localiza con Grep y lee solo el rango necesario con Read (offset/limit)."
+            "Blocked by claude-deck: {given} has {lines} lines (max. {max_lines} to read it whole). Locate with Grep and read only the needed range with Read (offset/limit)."
         ))
     } else {
         None
@@ -211,9 +211,9 @@ mod tests {
         let p = d.path().join("big.rs");
         let given = p.to_str().unwrap();
         let reason = read(&d, json!({ "file_path": given })).unwrap();
-        assert!(reason.starts_with("Bloqueado por claude-deck: "));
+        assert!(reason.starts_with("Blocked by claude-deck: "));
         assert!(reason.contains(given));
-        assert!(reason.contains("500 líneas (máx. 300"));
+        assert!(reason.contains("500 lines (max. 300"));
     }
 
     #[test]

@@ -43,7 +43,7 @@ fn elapsed_ms(a: &Subagent) -> u64 {
 
 /// Type label plus a small "bg" tag for background subagents.
 fn type_cell(ui: &mut Ui, a: &Subagent) {
-    ui.label(a.subagent_type.as_deref().unwrap_or("agente"));
+    ui.label(a.subagent_type.as_deref().unwrap_or("agent"));
     if a.background {
         ui.label(RichText::new("bg").small().color(ACCENT));
     }
@@ -78,7 +78,7 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
         Some(super::Selected::Session(k)) => Some(*k),
         _ => None,
     };
-    ui.checkbox(&mut settings.all_subagents, "Todas las sesiones");
+    ui.checkbox(&mut settings.all_subagents, "All sessions");
     let all = settings.all_subagents;
 
     let mut list: Vec<(&Session, &Subagent)> = Vec::new();
@@ -114,7 +114,7 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
         .show(ui, |ui| {
             // --- Active ---
             if running.is_empty() {
-                ui.label(theme::muted("Ningún subagente trabajando"));
+                ui.label(theme::muted("No subagents running"));
             } else {
                 ui.push_id("subagents_active", |ui| {
                     TableBuilder::new(ui)
@@ -131,11 +131,11 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
                         .header(22.0, |mut h| {
                             for t in [
                                 "",
-                                "Tipo",
-                                "Descripción",
-                                "Actividad",
-                                "Duración",
-                                "Herram.",
+                                "Type",
+                                "Description",
+                                "Activity",
+                                "Duration",
+                                "Tools",
                             ] {
                                 h.col(|ui| {
                                     ui.label(theme::muted(t));
@@ -187,7 +187,7 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
             if !finished.is_empty() {
                 ui.add_space(6.0);
                 let sum: u64 = finished.iter().map(|(_, a)| a.tokens_total()).sum();
-                let title = format!("Acabados · {} · {} tokens", finished.len(), fmt_tokens(sum));
+                let title = format!("Finished · {} · {} tokens", finished.len(), fmt_tokens(sum));
                 egui::CollapsingHeader::new(RichText::new(title).small().color(MUTED))
                     .id_salt("subagents_finished_header")
                     .default_open(false)
@@ -213,14 +213,14 @@ pub fn show(ui: &mut Ui, app: &mut DeckApp, actions: &mut Vec<Action>) {
                                 .spacing([16.0, 2.0])
                                 .show(ui, |ui| {
                                     for h in [
-                                        "Modelo",
-                                        "Entrada",
-                                        "Salida",
-                                        "Caché leída",
-                                        "Caché creada",
+                                        "Model",
+                                        "Input",
+                                        "Output",
+                                        "Cache read",
+                                        "Cache created",
                                         "Total CLI",
-                                        "Duración",
-                                        "Herram.",
+                                        "Duration",
+                                        "Tools",
                                     ] {
                                         ui.label(theme::muted(h));
                                     }
@@ -266,7 +266,7 @@ fn finished_section(ui: &mut Ui, finished: &[(&Session, &Subagent)], all: bool, 
     // Per type: (count, tokens, total duration ms).
     let mut by_type: Vec<(String, u64, u64, u64)> = Vec::new();
     for (_, a) in finished {
-        let ty = a.subagent_type.as_deref().unwrap_or("agente");
+        let ty = a.subagent_type.as_deref().unwrap_or("agent");
         let tk = a.tokens_total();
         let ms = elapsed_ms(a);
         if let Some(e) = by_type.iter_mut().find(|e| e.0 == ty) {
@@ -285,7 +285,7 @@ fn finished_section(ui: &mut Ui, finished: &[(&Session, &Subagent)], all: bool, 
             .spacing([16.0, 2.0])
             .striped(true)
             .show(ui, |ui| {
-                for h in ["Tipo", "Nº", "Tokens", "Media tokens", "Duración media"] {
+                for h in ["Type", "No.", "Tokens", "Avg tokens", "Avg duration"] {
                     ui.label(theme::muted(h));
                 }
                 ui.end_row();
@@ -317,11 +317,11 @@ fn finished_section(ui: &mut Ui, finished: &[(&Session, &Subagent)], all: bool, 
             .header(22.0, |mut h| {
                 for t in [
                     "",
-                    "Tipo",
-                    "Descripción",
-                    "Modelo",
-                    "Duración",
-                    "Herram.",
+                    "Type",
+                    "Description",
+                    "Model",
+                    "Duration",
+                    "Tools",
                     "Tokens",
                 ] {
                     h.col(|ui| {

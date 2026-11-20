@@ -78,10 +78,10 @@ pub fn model_label<'a>(alias: &str, seen: impl IntoIterator<Item = &'a str>) -> 
 
 /// Modes offered in the header: CLI value and Spanish label.
 pub const MODES: [(&str, &str); 4] = [
-    ("default", "Preguntar (default)"),
-    ("acceptEdits", "Aceptar ediciones"),
+    ("default", "Ask (default)"),
+    ("acceptEdits", "Accept edits"),
     ("plan", "Plan"),
-    ("bypassPermissions", "Sin permisos (peligroso)"),
+    ("bypassPermissions", "Bypass permissions (dangerous)"),
 ];
 
 /// Spanish label for a CLI permission mode.
@@ -529,7 +529,7 @@ impl DeckApp {
         let ctx = self.ctx.clone();
         std::thread::spawn(move || {
             let r = git::repo_root(std::path::Path::new(&cwd))
-                .ok_or_else(|| "La carpeta no es un repositorio git".to_owned())
+                .ok_or_else(|| "The folder is not a git repository".to_owned())
                 .and_then(|root| git::create_worktree_auto(&root));
             let _ = tx.send(r);
             ctx.request_repaint();
@@ -544,7 +544,7 @@ impl DeckApp {
         let ctx = self.ctx.clone();
         std::thread::spawn(move || {
             let keep = format!(
-                "Worktree conservado en {} (rama {})",
+                "Worktree kept at {} (branch {})",
                 info.path.display(),
                 info.branch
             );
@@ -566,7 +566,7 @@ impl DeckApp {
                     }
                 }
                 if done {
-                    "Worktree eliminado (sin cambios)".to_owned()
+                    "Worktree removed (no changes)".to_owned()
                 } else {
                     format!("{keep}. No se pudo eliminar: {last}")
                 }
@@ -656,7 +656,7 @@ impl DeckApp {
                             entry: (*entry).clone(),
                             loaded,
                         })
-                        .map_err(|e| format!("No se pudo leer la conversación: {e}"));
+                        .map_err(|e| format!("Could not read the conversation: {e}"));
                     let _ = tx.send(r);
                     ctx.request_repaint();
                 });
@@ -674,7 +674,7 @@ impl DeckApp {
                         }
                     }
                     Err(e) => {
-                        self.error = Some(format!("No se pudo borrar la conversación: {e}"));
+                        self.error = Some(format!("Could not delete the conversation: {e}"));
                     }
                 }
             }
@@ -683,7 +683,7 @@ impl DeckApp {
                     return;
                 };
                 let Some(id) = s.session_id.clone() else {
-                    self.error = Some("Esta conversación aún no tiene identificador.".into());
+                    self.error = Some("This conversation has no ID yet.".into());
                     return;
                 };
                 let (cwd, title, items) = (s.cwd.clone(), s.title.clone(), s.transcript.clone());
@@ -808,7 +808,7 @@ impl DeckApp {
                 let start = self.settings.folder.clone();
                 std::thread::spawn(move || {
                     if let Some(p) = rfd::FileDialog::new()
-                        .set_title("Elegir carpeta de trabajo")
+                        .set_title("Choose working folder")
                         .set_directory(start)
                         .pick_folder()
                     {

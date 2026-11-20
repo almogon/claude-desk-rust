@@ -83,13 +83,13 @@ pub type Notifier = Arc<dyn Fn() + Send + Sync>;
 /// Errors of the session layer. Messages are user-visible (Spanish).
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
-    #[error("No se encontró el ejecutable de Claude Code (`claude`). Instálalo o añádelo al PATH.")]
+    #[error("Claude Code executable (`claude`) not found. Install it or add it to the PATH.")]
     ClaudeNotFound,
-    #[error("No se pudo iniciar Claude Code: {0}")]
+    #[error("Could not start Claude Code: {0}")]
     Spawn(String),
-    #[error("La sesión ya no está activa.")]
+    #[error("The session is no longer active.")]
     Closed,
-    #[error("Error ejecutando Claude Code: {0}")]
+    #[error("Error running Claude Code: {0}")]
     Command(String),
 }
 
@@ -455,15 +455,15 @@ impl SessionHandle {
                         let code = s
                             .code()
                             .map(|c| c.to_string())
-                            .unwrap_or_else(|| "desconocido".into());
-                        let mut msg = format!("Claude Code terminó con código {code}.");
+                            .unwrap_or_else(|| "unknown".into());
+                        let mut msg = format!("Claude Code exited with code {code}.");
                         if !tail.is_empty() {
                             msg.push(' ');
                             msg.push_str(&tail.join(" | "));
                         }
                         Some(msg)
                     }
-                    Err(e) => Some(format!("Error esperando al proceso de Claude Code: {e}")),
+                    Err(e) => Some(format!("Error waiting for the Claude Code process: {e}")),
                 }
             };
             em.emit(SessionEventKind::Exited { error });
@@ -609,13 +609,13 @@ pub fn run_usage_command(cwd: &Path) -> Result<String, SessionError> {
         let out = tokio::time::timeout(Duration::from_secs(60), cmd.output())
             .await
             .map_err(|_| {
-                SessionError::Command("tiempo de espera agotado ejecutando /usage".into())
+                SessionError::Command("timed out running /usage".into())
             })?
             .map_err(|e| SessionError::Spawn(e.to_string()))?;
         if !out.status.success() {
             let err = String::from_utf8_lossy(&out.stderr);
             return Err(SessionError::Command(format!(
-                "/usage terminó con error: {}",
+                "/usage exited with an error: {}",
                 err.trim()
             )));
         }

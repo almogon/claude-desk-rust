@@ -186,7 +186,7 @@ fn scan_file(path: &Path, mtime: SystemTime) -> Option<HistoryEntry> {
         .or(queued_prompt)
         .or(last_prompt)
         .map(|t| truncate_title(&t, HISTORY_TITLE_MAX))
-        .unwrap_or_else(|| "(sin título)".to_owned());
+        .unwrap_or_else(|| "(untitled)".to_owned());
 
     Some(HistoryEntry {
         session_id,
@@ -322,7 +322,7 @@ pub fn load_session(path: &Path) -> std::io::Result<LoadedSession> {
                         if tt.starts_with("<pasted_text>") {
                             let lines = tt.lines().count().saturating_sub(2);
                             chips.push(AttachmentSummary {
-                                label: format!("Texto pegado · {lines} líneas"),
+                                label: format!("Pasted text · {lines} lines"),
                             });
                             continue;
                         }
@@ -332,7 +332,7 @@ pub fn load_session(path: &Path) -> std::io::Result<LoadedSession> {
                         if tt.starts_with("[Request interrupted") {
                             out.items.push(Item::Note {
                                 kind: NoteKind::Info,
-                                text: "Interrumpido por el usuario.".into(),
+                                text: "Interrupted by the user.".into(),
                                 at,
                             });
                             continue;
@@ -377,6 +377,6 @@ pub fn load_session(path: &Path) -> std::io::Result<LoadedSession> {
     out.title = ai_title
         .or(first_prompt)
         .map(|t| truncate_title(&t, HISTORY_TITLE_MAX))
-        .unwrap_or_else(|| "(sin título)".to_owned());
-    Ok(out)
+        .unwrap_or_else(|| "(untitled)".to_owned());
+Ok(out)
 }
